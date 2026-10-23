@@ -1,0 +1,45 @@
+{
+  "name": "Lozkho Stereo",
+  "short_name": "Lozkho",
+  "description": "Aplicación de reproducción musical que simula una estación de radio. Funciona principalmente sin conexión a internet.",
+  "lang": "es",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "categories": ["music", "entertainment", "audio"],
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Emisora activa",
+      "url": "./?view=emisora",
+      "description": "Ver la emisora que está sonando"
+    },
+    {
+      "name": "Lista de emisoras",
+      "url": "./?view=emisoras",
+      "description": "Cambia de emisora"
+    },
+    {
+      "name": "Letras",
+      "url": "./?view=letras",
+      "description": "Gestiona letras locales y en línea"
+    }
+  ]
+}

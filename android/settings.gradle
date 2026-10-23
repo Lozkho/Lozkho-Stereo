@@ -1,0 +1,2 @@
+rootProject.name = "lozkho-stereo"
+include ':app'
