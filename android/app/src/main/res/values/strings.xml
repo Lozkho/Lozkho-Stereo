@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lozkho Stereo</string>
+    <string name="widget_description">Muestra la emisora activa de Lozkho Stereo</string>
+    <string name="notification_channel_name">Reproducción</string>
+    <string name="notification_channel_desc">Notificación de la emisora activa</string>
+</resources>

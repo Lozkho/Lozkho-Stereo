@@ -1,0 +1,42 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace 'com.lozkho.stereo'
+    compileSdk 34
+    defaultConfig {
+        applicationId "com.lozkho.stereo"
+        minSdk 24
+        targetSdk 34
+        versionCode 4
+        versionName "0.2.1"
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+    // CRÍTICO: AAPT2 por defecto ignora directorios que empiezan con _
+    // El pattern por defecto incluye <dir>_* que excluye _next/
+    // Override del pattern para NO excluir _next/
+    aaptOptions {
+        // Quitar <dir>_* del pattern por defecto
+        // Pattern por defecto: !.svn:!.git:!.ds_store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*.scc:*~
+        // Nuestro pattern: igual pero SIN <dir>_*
+        ignoreAssetsPattern "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*.scc:*~"
+    }
+}
+
+// Excluir globalmente kotlin-stdlib-jdk7 y kotlin-stdlib-jdk8 de TODAS las
+// dependencias. A partir de Kotlin 1.8, estas clases se fusionaron en
+// kotlin-stdlib principal. Las versiones separadas (1.6.0) que arrastran
+// appcompat, core y documentfile causan "Duplicate class" en el build.
+configurations.all {
+    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.core:core:1.12.0'
+    implementation 'androidx.documentfile:documentfile:1.0.1'
+}
