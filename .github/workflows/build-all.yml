@@ -1,0 +1,210 @@
+name: Build All
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: Lint + Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Lint
+        run: bun run lint
+      - name: Build (static export)
+        run: bun run build
+      - name: Upload static export
+        uses: actions/upload-artifact@v4
+        with:
+          name: lozkho-static-export
+          path: out/
+          retention-days: 14
+
+  build-windows:
+    name: Windows (ZIP + .exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Build static export
+        run: bun run build
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -Path out\* -DestinationPath dist\LozkhoStereo-Windows-portable.zip
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: LozkhoStereo-Windows-portable
+          path: dist\LozkhoStereo-Windows-portable.zip
+          retention-days: 30
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+      - name: Build Tauri app (NSIS installer)
+        shell: pwsh
+        run: cargo tauri build --bundles nsis
+      - name: Copy installer to dist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $installer = Get-ChildItem -Path src-tauri\target\release\bundle\nsis -Filter "*.exe" -Recurse | Select-Object -First 1
+          if ($installer) {
+            Copy-Item $installer.FullName dist\LozkhoStereo-Windows-installer.exe
+          } else {
+            Write-Error "No se encontró el instalador NSIS"
+            exit 1
+          }
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: LozkhoStereo-Windows-installer
+          path: dist\LozkhoStereo-Windows-installer.exe
+          retention-days: 30
+      - name: Attach to release (if tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist\LozkhoStereo-Windows-portable.zip
+            dist\LozkhoStereo-Windows-installer.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >
+            platforms;android-34
+            build-tools;34.0.0
+            platform-tools
+      - name: Accept licenses
+        run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build static export
+        run: bun run build
+      - name: Verify build output
+        run: |
+          test -f out/index.html || { echo "ERROR: out/index.html no existe tras el build"; exit 1; }
+          test -d out/_next/static/chunks || { echo "ERROR: out/_next/static/chunks no existe"; exit 1; }
+          echo "Build output OK — $(find out/ -type f | wc -l) archivos"
+      - name: Copy PWA to Android assets
+        run: |
+          rm -rf android/app/src/main/assets
+          mkdir -p android/app/src/main/assets
+          cp -a out/. android/app/src/main/assets/
+          ASSET_COUNT=$(find android/app/src/main/assets/ -type f | wc -l)
+          echo "Assets copiados: $ASSET_COUNT archivos"
+          test -f android/app/src/main/assets/index.html || { echo "ERROR: index.html no se copió"; exit 1; }
+          test -d android/app/src/main/assets/_next/static/chunks || { echo "ERROR: _next/ no se copió"; find android/app/src/main/assets/ -maxdepth 1 -type d; exit 1; }
+          JS_COUNT=$(find android/app/src/main/assets/_next/ -name "*.js" | wc -l)
+          echo "JS en _next/: $JS_COUNT archivos"
+          test "$JS_COUNT" -gt 0 || { echo "ERROR: no hay JS en _next/"; exit 1; }
+      - name: Verify Android project files
+        working-directory: android
+        run: |
+          if [ ! -f build.gradle ]; then
+            echo "WARN: build.gradle no encontrado, recreando..."
+            printf 'buildscript {\n    repositories {\n        google()\n        mavenCentral()\n    }\n    dependencies {\n        classpath "com.android.tools.build:gradle:8.1.0"\n    }\n}\nallprojects {\n    repositories {\n        google()\n        mavenCentral()\n    }\n}\n' > build.gradle
+          fi
+          if [ ! -f settings.gradle ]; then
+            echo "WARN: settings.gradle no encontrado, recreando..."
+            printf 'rootProject.name = "lozkho-stereo"\ninclude ":app"\n' > settings.gradle
+          fi
+          if [ ! -f app/build.gradle ]; then
+            echo "ERROR: app/build.gradle no encontrado"; exit 1
+          fi
+          if [ ! -f app/src/main/AndroidManifest.xml ]; then
+            echo "ERROR: AndroidManifest.xml no encontrado"; exit 1
+          fi
+          if [ ! -f app/src/main/assets/index.html ]; then
+            echo "ERROR: assets/index.html no encontrado"; exit 1
+          fi
+          echo "Proyecto Android OK"
+      - name: Build APK with Gradle
+        working-directory: android
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+        run: |
+          set -e
+          echo "=== Verificacion pre-build ==="
+          echo "Assets totales: $(find app/src/main/assets/ -type f | wc -l)"
+          echo "_next existe: $(test -d app/src/main/assets/_next && echo SI || echo NO)"
+          echo "JS en _next: $(find app/src/main/assets/_next/ -name '*.js' 2>/dev/null | wc -l)"
+          JS_COUNT=$(find app/src/main/assets/_next/ -name "*.js" 2>/dev/null | wc -l)
+          if [ "$JS_COUNT" -eq 0 ]; then
+            echo "ERROR CRITICO: No hay JS en _next/. Abortando."
+            find app/src/main/assets/ -maxdepth 2
+            exit 1
+          fi
+          if [ ! -f gradlew ]; then
+            echo "Descargando Gradle 8.2..."
+            curl -sL https://services.gradle.org/distributions/gradle-8.2-bin.zip -o /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d /tmp/
+            /tmp/gradle-8.2/bin/gradle wrapper --gradle-version 8.2
+          fi
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon -x test
+          APK=$(find . -name "*.apk" -path "*/debug/*" | head -1)
+          [ -z "$APK" ] && APK=$(find . -name "*.apk" | head -1)
+          [ -z "$APK" ] && { echo "ERROR: No APK generated"; exit 1; }
+          echo "=== Verificacion post-build ==="
+          echo "APK size: $(ls -lh "$APK" | awk '{print $5}')"
+          NEXT_IN_APK=$(unzip -l "$APK" | grep "assets/_next/" | wc -l)
+          echo "Archivos _next/ en APK: $NEXT_IN_APK"
+          if [ "$NEXT_IN_APK" -eq 0 ]; then
+            echo "ERROR CRITICO: APK no contiene _next/. Gradle no empaqueto los assets."
+            exit 1
+          fi
+          echo "Build APK OK"
+          mkdir -p ../dist
+          cp "$APK" ../dist/LozkhoStereo-Android-debug.apk
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LozkhoStereo-Android-debug-apk
+          path: dist/LozkhoStereo-Android-debug.apk
+          retention-days: 30
+      - name: Attach to release (if tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/LozkhoStereo-Android-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
