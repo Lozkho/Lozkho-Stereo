@@ -5,7 +5,12 @@ import { useLozkho } from "@/lozkho/store";
 import { buildExtendedPlaylist, computeCycleDurationMs } from "@/lozkho/store";
 import { audioStore } from "@/lozkho/audioStore";
 import { lozkhoLog } from "@/lozkho/logger";
-import { readAudioDurationMs } from "@/lozkho/useFileImport";
+import {
+  readAudioDurationMs,
+  importedFileText,
+  importedFileBlob,
+  type ImportedFile,
+} from "@/lozkho/useFileImport";
 import {
   parseM3U8,
   parseStationJson,
@@ -13,6 +18,7 @@ import {
   resolveTracksWithAudioFiles,
   type ParsedStation,
 } from "@/lozkho/stationImport";
+import { saveStationThumbnail } from "@/lozkho/thumbnail";
 import {
   writeFileToDir,
   ensureSubdir,
@@ -50,7 +56,6 @@ import {
 } from "@/components/lozkho/ImportExportDialog";
 import { StationEditor } from "@/components/lozkho/StationEditor";
 import { toast } from "sonner";
-import type { ImportedFile } from "@/lozkho/useFileImport";
 import type { Track } from "@/lozkho/types";
 
 const STATION_FORMATS: ImportExportFormat[] = [
@@ -353,14 +358,18 @@ export function StationsListView() {
       // Leer duración real de cada pista
       for (let i = 0; i < playlistWithIds.length; i++) {
         const track = playlistWithIds[i];
-        if (track.sourceUri?.startsWith("blob:")) {
+        const su = track.sourceUri ?? "";
+        // blob: (PC/IndexedDB) o https://lozkho.local (Android streaming)
+        if (su.startsWith("blob:") || su.includes("lozkho.local")) {
           audioAssociated++;
           const matched = audioFiles.find((af) => {
             const relOrName = (af.relativePath ?? af.name).toLowerCase();
             return relOrName.includes(track.title.toLowerCase());
           });
-          if (matched) {
-            readAudioDurationMs(matched.file).then((durationMs) => {
+          // Duración: File nativo (PC) o URL de streaming (Android)
+          const durSource = matched?.file ?? matched?.contentUrl;
+          if (durSource) {
+            readAudioDurationMs(durSource).then((durationMs) => {
               if (durationMs > 0) {
                 const s = useLozkho.getState();
                 const station = s.stations.find((x) => x.id === newId);
@@ -444,8 +453,11 @@ export function StationsListView() {
           });
           if (matched) {
             try {
-              const thumbKey = `thumb-${stationId}`;
-              const blobUrl = await audioStore.saveFile(thumbKey, matched.file);
+              // Reescala + IndexedDB (mecanismo unificado de miniaturas)
+              const blobUrl = await saveStationThumbnail(
+                stationId,
+                await importedFileBlob(matched)
+              );
               return { ...station, thumbnailUri: blobUrl };
             } catch (err) {
               lozkhoLog.warn(`Thumbnail: no se pudo guardar ${thumbName}`, err);
@@ -504,8 +516,10 @@ export function StationsListView() {
 
       if (matched) {
         try {
-          const thumbKey = `thumb-${stationId}`;
-          const blobUrl = await audioStore.saveFile(thumbKey, matched.file);
+          const blobUrl = await saveStationThumbnail(
+            stationId,
+            await importedFileBlob(matched)
+          );
           lozkhoLog.debug(`Thumbnail: auto-resuelto para "${station.name}"`, {
             file: matched.name,
             rel: matched.relativePath,
@@ -546,7 +560,7 @@ export function StationsListView() {
 
         let text: string;
         try {
-          text = await f.file.text();
+          text = await importedFileText(f);
         } catch (textErr) {
           console.error(`No se pudo leer ${f.name} como texto:`, textErr);
           errors++;
@@ -557,7 +571,7 @@ export function StationsListView() {
 
         if (lower.endsWith(".zip")) {
           // ZIP: parsear entradas internas
-          const result = await parseZip(f.file);
+          const result = await parseZip(await importedFileBlob(f));
           stationsParsed = result.stations;
           if (result.errors.length > 0) {
             console.warn("ZIP errors:", result.errors);
@@ -595,7 +609,7 @@ export function StationsListView() {
           }
           if (sidecar) {
             try {
-              const sidecarText = await sidecar.file.text();
+              const sidecarText = await importedFileText(sidecar);
               const sideStations = parseStationJson(sidecarText);
               if (sideStations.length > 0) {
                 // Fusionar metadatos del sidecar en la playlist del M3U8
@@ -675,21 +689,24 @@ export function StationsListView() {
           }));
           imported++;
 
-          // Leer duración real de las pistas con blob: URL (las que se
-          // resolvieron con audio real)
+          // Leer duración real de las pistas con audio reproducible
+          // (blob: en PC o https://lozkho.local en Android streaming)
           for (let i = 0; i < playlistWithIds.length; i++) {
             const track = playlistWithIds[i];
-            if (track.sourceUri?.startsWith("blob:")) {
+            const su = track.sourceUri ?? "";
+            if (su.startsWith("blob:") || su.includes("lozkho.local")) {
               audioAssociated++;
-              // Buscar el File original para leer duración
+              // Buscar el archivo original para leer duración
               const matched = audioFiles.find((af) => {
                 const lower = af.name.toLowerCase();
                 const trackTitle = track.title.toLowerCase();
                 const baseLower = lower.replace(/\.[^.]+$/, "");
                 return baseLower === trackTitle;
               });
-              if (matched) {
-                readAudioDurationMs(matched.file).then((durationMs) => {
+              // Duración: File nativo (PC) o URL de streaming (Android)
+              const durSource = matched?.file ?? matched?.contentUrl;
+              if (durSource) {
+                readAudioDurationMs(durSource).then((durationMs) => {
                   if (durationMs > 0) {
                     const s = useLozkho.getState();
                     const station = s.stations.find((x) => x.id === newId);
@@ -1274,19 +1291,23 @@ export function StationsListView() {
       const f = audioFiles[i];
       const baseName = f.name.replace(/\.[^.]+$/, "");
       const trackId = `trk-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`;
-      const blobUrl = await audioStore.saveFile(trackId, f.file);
+      // Android (streaming SAF): URL lozkho.local persistente, sin copia en
+      // IndexedDB. PC/web: blob guardado en IndexedDB.
+      const sourceUri = f.contentUrl
+        ? f.contentUrl
+        : await audioStore.saveFile(trackId, f.file!);
       const track = {
         id: trackId,
         title: baseName,
         artist: "Artista desconocido",
         genre: undefined,
         durationMs: TEMP_DURATION_MS,
-        sourceUri: blobUrl,
+        sourceUri,
         license: "Importado por el usuario",
       };
       useLozkho.getState().addTrackToStation(stationId, track);
       // Leer duración real (sobrescribe la temporal cuando resuelva)
-      readAudioDurationMs(f.file).then((durationMs) => {
+      readAudioDurationMs(f.file ?? f.contentUrl!).then((durationMs) => {
         if (durationMs > 0) {
           useLozkho.getState().updateStation(stationId, {
             playlist: useLozkho
@@ -1298,7 +1319,7 @@ export function StationsListView() {
       });
     }
     toast.success(`${audioFiles.length} pista(s) añadida(s) a la emisora activa`, {
-      description: "Archivos guardados localmente (IndexedDB).",
+      description: "Audio asociado a la emisora.",
     });
   };
 

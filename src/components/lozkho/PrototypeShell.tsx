@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLozkho, buildExtendedPlaylist } from "@/lozkho/store";
 import { audioStore } from "@/lozkho/audioStore";
 import { lozkhoLog } from "@/lozkho/logger";
@@ -9,14 +9,16 @@ import { StationScreen } from "./StationScreen";
 import { SettingsPanel } from "./SettingsPanel";
 import { StationsListView } from "./views/StationsListView";
 import { LyricsManagerView } from "./views/LyricsManagerView";
+import { KaraokeView } from "./views/KaraokeView";
 import { AudioPlayer } from "./AudioPlayer";
 import { DebugLogButton } from "./DebugLogButton";
-import { Radio, ListMusic, FileText } from "lucide-react";
+import { Radio, ListMusic, FileText, Mic } from "lucide-react";
 import { toast } from "sonner";
 
 const NAV = [
   { id: "emisora", label: "Emisora", icon: Radio },
   { id: "emisoras", label: "Emisoras", icon: ListMusic },
+  { id: "karaoke", label: "Karaoke", icon: Mic },
   { id: "letras", label: "Letras", icon: FileText },
 ] as const;
 
@@ -42,6 +44,12 @@ export function PrototypeShell() {
   const activeStationId = useLozkho((s) => s.activeStationId);
   const stations = useLozkho((s) => s.stations);
   const tick = useLozkho((s) => s.tick);
+  // El tick cambia cada 500ms, pero el widget/nativo solo necesita enterarse
+  // cuando cambia la emisora, la pista o cada ~30s (para el reloj mostrado).
+  // Sin este filtro se escribían SharedPreferences y se refrescaba la
+  // notificación dos veces por segundo (y se reiniciaba el foreground
+  // service constantemente).
+  const lastNativeSyncRef = useRef<string>("");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -61,6 +69,12 @@ export function PrototypeShell() {
     } else if (current?.kind === "ad") {
       trackTitle = "PUBLICIDAD";
     }
+
+    const signature = `${station.id}|${current?.ref.id ?? "-"}|${Math.floor(
+      station.playback.positionMs / 30_000
+    )}`;
+    if (signature === lastNativeSyncRef.current) return;
+    lastNativeSyncRef.current = signature;
 
     const data = {
       name: station.name,
@@ -149,10 +163,11 @@ export function PrototypeShell() {
     };
   }, []);
 
-  // Registrar funciones globales para cambio de emisora con teclas de volumen
+  // Registrar funciones globales para cambio de emisora con teclas de volumen.
   // Android (MainActivity.java) las invoca vía evaluateJavascript cuando el
-  // usuario SOSTIENE la tecla de volumen (long-press). Las pulsaciones cortas
-  // cambian el volumen del sistema normalmente y no llegan aquí.
+  // usuario MANTIENE pulsada la tecla (~0.4s); las pulsaciones cortas siguen
+  // ajustando el volumen del sistema normalmente. También las usa la
+  // notificación de medios y los botones del widget.
   //
   // También se invocan en PC si el usuario tiene mapeado un atajo global
   // (configurable en el futuro; por ahora no hay teclado de volumen en PC).
@@ -199,6 +214,7 @@ export function PrototypeShell() {
           <StationScreen onOpenSettings={() => openSettings(true)} />
         )}
         {view === "emisoras" && <StationsListView />}
+        {view === "karaoke" && <KaraokeView />}
         {view === "letras" && <LyricsManagerView />}
       </main>
 
@@ -208,7 +224,7 @@ export function PrototypeShell() {
 
       {/* Navegación inferior tipo app móvil */}
       <nav className="fixed bottom-0 inset-x-0 z-20 bg-black/95 backdrop-blur border-t border-white/10 pb-[calc(env(safe-area-inset-bottom)+0.25rem)]">
-        <div className="mx-auto max-w-2xl grid grid-cols-3">
+        <div className="mx-auto max-w-2xl grid grid-cols-4">
           {NAV.map((item) => {
             const Icon = item.icon;
             const active = view === item.id;

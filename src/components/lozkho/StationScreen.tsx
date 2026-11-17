@@ -185,7 +185,7 @@ export function StationScreen({ onOpenSettings }: StationScreenProps) {
       <div className="px-4 pt-2 pb-1">
         <div className="flex items-end gap-3">
           <span
-            className="freq-display text-6xl sm:text-7xl font-extrabold leading-none"
+            className="freq-display text-[clamp(2.5rem,14vw,4.5rem)] font-extrabold leading-none"
             style={{
               color: accent,
               textShadow: `0 0 28px ${hexToRgba(accent, 0.45)}`,
@@ -304,7 +304,7 @@ export function StationScreen({ onOpenSettings }: StationScreenProps) {
       </div>
 
       {/* Dock de emisoras (solo la activa suena) */}
-      <div className="pt-6 pb-32">
+      <div className="pt-6">
         <StationDock
           stations={stations}
           activeId={station.id}
