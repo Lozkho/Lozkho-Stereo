@@ -55,7 +55,7 @@ export function KaraokeLines({
   }, [activeIndex]);
 
   const maxHeightClass =
-    variant === "full" ? "max-h-[calc(100dvh-17rem)]" : "max-h-[40dvh]";
+    variant === "full" ? "max-h-[calc(100dvh_-_17rem)]" : "max-h-[40dvh]";
   const textSize =
     variant === "full" ? "text-2xl sm:text-3xl" : "text-lg sm:text-xl";
 

@@ -22,9 +22,18 @@ export interface CurrentItemInfo {
  * Ítem actual (pista o anuncio) de una emisora según su playback.
  */
 export function getCurrentItem(station: Station): CurrentItemInfo | undefined {
+  // Defensa: estados persistidos de versiones anteriores pueden traer
+  // playback incompleto. Nunca debemos lanzar una excepción aquí: se
+  // propagaría al render de la vista Karaoke y dejaría la app en blanco.
+  if (!station || !station.playback || !Array.isArray(station.playlist)) {
+    return undefined;
+  }
   const extended = buildExtendedPlaylist(station);
   if (extended.length === 0) return undefined;
-  const current = extended[station.playback.currentItemIndex % extended.length];
+  const index = Number.isInteger(station.playback.currentItemIndex)
+    ? Math.abs(station.playback.currentItemIndex) % extended.length
+    : 0;
+  const current = extended[index];
   if (!current) return undefined;
   const isAd = current.kind === "ad";
   const track = current.kind === "track"

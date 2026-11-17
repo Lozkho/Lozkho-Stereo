@@ -109,9 +109,11 @@ public class MainActivity extends Activity {
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         settings.setSupportZoom(false);
-        // Respetar la escala de fuente del sistema (accesibilidad). Antes se
-        // forzaba 100%; eso ocultaba los ajustes de accesibilidad del usuario
-        // y causaba tamaños "desproporcionados" según el dispositivo.
+        // Forzar escala de texto al 100%. Se había probado respetar la
+        // escala del sistema por accesibilidad, pero en WebView hace que
+        // etiquetas/diálogos crezcan y desborden el dock de pestañas en
+        // algunos dispositivos. La UI ya usa clamps fluidos (tailwind).
+        settings.setTextZoom(100);
 
         // El meta viewport (width=device-width) lo emite Next.js desde el HTML
         // de la PWA; el WebView lo respeta con UseWideViewPort/LoadWithOverviewMode

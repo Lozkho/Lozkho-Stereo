@@ -36,7 +36,10 @@ export function KaraokeView() {
   const track = current?.track;
   const lyrics = findLyricsForTrack(allLyrics, track);
   const durationMs = current?.ref.durationMs ?? 0;
-  const positionMs = station.playback.positionMs;
+  const positionRaw = station.playback?.positionMs;
+  const positionMs = typeof positionRaw === "number" && isFinite(positionRaw)
+    ? Math.max(0, positionRaw)
+    : 0;
   const pct = durationMs > 0 ? Math.min(100, (positionMs / durationMs) * 100) : 0;
 
   return (
