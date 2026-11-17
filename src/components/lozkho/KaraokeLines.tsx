@@ -11,7 +11,7 @@ interface KaraokeLinesProps {
   /** Color de acento de la emisora. */
   accent: string;
   /**
-   * "panel" — versión compacta dentro de LyricsPanel (max 40dvh).
+   * "panel" — versión compacta dentro de LyricsPanel (max 40vh).
    * "full"  — versión grande para la pestaña Karaoke.
    */
   variant?: "panel" | "full";
@@ -55,7 +55,7 @@ export function KaraokeLines({
   }, [activeIndex]);
 
   const maxHeightClass =
-    variant === "full" ? "max-h-[calc(100dvh_-_17rem)]" : "max-h-[40dvh]";
+    variant === "full" ? "max-h-[calc(100vh_-_17rem)]" : "max-h-[40vh]";
   const textSize =
     variant === "full" ? "text-2xl sm:text-3xl" : "text-lg sm:text-xl";
 
@@ -72,7 +72,7 @@ export function KaraokeLines({
         ["--station-accent-glow" as any]: hexToRgba(accent, 0.32),
       }}
     >
-      <div className="h-[14dvh]" />
+      <div className="h-[14vh]" />
       {lyrics.lines.map((l, i) => (
         <p
           key={i}
@@ -89,7 +89,7 @@ export function KaraokeLines({
           {l.text}
         </p>
       ))}
-      <div className="h-[20dvh]" />
+      <div className="h-[20vh]" />
     </div>
   );
 }

@@ -14,6 +14,7 @@ import { getFontFamily } from "@/lozkho/fonts";
 import type { Station } from "@/lozkho/types";
 import { AdBanner } from "./AdBanner";
 import { CycleEstimate } from "./CycleEstimate";
+import { VolumeControl } from "./VolumeControl";
 import { Settings, Radio, Music2, Disc3, Bell, Infinity as InfinityIcon, ImageIcon } from "lucide-react";
 
 interface StationScreenProps {
@@ -46,7 +47,7 @@ export function StationScreen({ onOpenSettings }: StationScreenProps) {
 
   return (
     <div
-      className="relative min-h-[100dvh] w-full overflow-x-hidden station-vignette"
+      className="relative min-h-[100vh] w-full overflow-x-hidden station-vignette"
       style={styleVars}
     >
       {/* Capa negra base */}
@@ -61,6 +62,7 @@ export function StationScreen({ onOpenSettings }: StationScreenProps) {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <VolumeControl />
           <span
             className="live-dot text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded-full border flex items-center gap-1"
             style={{
@@ -68,7 +70,6 @@ export function StationScreen({ onOpenSettings }: StationScreenProps) {
               borderColor: hexToRgba(accent, 0.5),
               backgroundColor: hexToRgba(accent, 0.08),
             }}
-            title="Auto-reproducción continua: todas las emisoras suenan en simultáneo, solo se escucha la activa."
           >
             <InfinityIcon size={11} /> EN VIVO
           </span>

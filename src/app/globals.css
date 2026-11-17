@@ -132,22 +132,21 @@
   }
   html, body {
     @apply bg-black text-foreground;
-    overscroll-behavior: none;
-    /* Prevenir scroll horizontal accidental en pantallas angostas
-       (Moto G7 Power, etc.) — sin esto, contenido que sobresale unos
-       píxeles del viewport causa scroll horizontal molesto. */
+    /* Sin overscroll-behavior: en WebViews antiguos (Moto G7 Power,
+       Android 9/10) bloquea el deslizamiento táctil del documento. */
     overflow-x: hidden;
     width: 100%;
     max-width: 100vw;
-    /* box-sizing ya está en border-box por Tailwind, pero lo reforzamos
-       para elementos absolutos que a veces lo resetean. */
+    -webkit-overflow-scrolling: touch;
     -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
   }
   body {
     font-feature-settings: "ss01", "cv01", "cv02";
-    /* Prevenir padding extra de safe-area cuando ya lo maneja cada página */
     margin: 0;
+    /* El documento SIEMPRE puede desplazarse verticalmente */
+    overflow-y: auto !important;
+    min-height: 100vh;
   }
 }
 

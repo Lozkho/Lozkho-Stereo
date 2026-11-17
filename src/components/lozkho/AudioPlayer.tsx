@@ -133,10 +133,15 @@ export function AudioPlayer() {
     (window as any).__lozkhoNextTrack = () => skipToNext();
     (window as any).__lozkhoPrevTrack = () => skipToPrev();
     (window as any).__lozkhoResumeAudio = () => resumeAudio();
+    (window as any).__lozkhoSetVolume = (v: number) => {
+      const a = audioRef.current;
+      if (a && isFinite(v)) a.volume = Math.max(0, Math.min(1, v));
+    };
     return () => {
       delete (window as any).__lozkhoNextTrack;
       delete (window as any).__lozkhoPrevTrack;
       delete (window as any).__lozkhoResumeAudio;
+      delete (window as any).__lozkhoSetVolume;
     };
   }, [skipToNext, skipToPrev, resumeAudio]);
 

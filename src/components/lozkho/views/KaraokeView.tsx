@@ -44,7 +44,7 @@ export function KaraokeView() {
 
   return (
     <div
-      className="relative min-h-[100dvh] w-full overflow-x-hidden station-vignette"
+      className="relative min-h-[100vh] w-full overflow-x-hidden station-vignette"
       style={{
         ["--station-accent" as any]: accent,
         ["--station-accent-glow" as any]: hexToRgba(accent, 0.32),

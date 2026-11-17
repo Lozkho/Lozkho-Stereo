@@ -1327,7 +1327,7 @@ export function StationsListView() {
   };
 
   return (
-    <div className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-32 min-h-[100dvh]">
+    <div className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-32 min-h-[100vh]">
       <header className="flex items-center justify-between mb-3">
         <div>
           <p className="text-[10px] uppercase tracking-widest text-white/40">

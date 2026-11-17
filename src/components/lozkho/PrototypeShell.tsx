@@ -207,7 +207,7 @@ export function PrototypeShell() {
   }, [useLozkho.getState().stations.length]);
 
   return (
-    <div className="min-h-[100dvh] bg-black text-white flex flex-col">
+    <div className="min-h-[100vh] bg-black text-white flex flex-col">
       <main className="flex-1">
         {view === "emisora" && (
           <StationScreen onOpenSettings={() => openSettings(true)} />
@@ -222,7 +222,9 @@ export function PrototypeShell() {
       <AudioPlayer />
 
       {/* Navegación inferior tipo app móvil */}
-      <nav className="fixed bottom-0 inset-x-0 z-20 bg-black/95 backdrop-blur border-t border-white/10 pb-[calc(env(safe-area-inset-bottom)+0.25rem)]">
+      {/* Nav fijo al final del flujo (sticky): en WebView antiguos un
+          position:fixed puede capturar el gesto de deslizamiento. */}
+      <nav className="sticky bottom-0 z-20 bg-black/95 backdrop-blur border-t border-white/10 pb-[calc(env(safe-area-inset-bottom)+0.25rem)]">
         <div className="mx-auto max-w-2xl grid grid-cols-4">
           {NAV.map((item) => {
             const Icon = item.icon;

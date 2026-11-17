@@ -160,7 +160,7 @@ export function ImportExportDialog({
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent
-        className="max-w-[95vw] sm:max-w-md bg-black border-white/10 max-h-[90dvh] flex flex-col gap-4 p-6 overflow-hidden"
+        className="max-w-[95vw] sm:max-w-md bg-black border-white/10 max-h-[90vh] flex flex-col gap-4 p-6 overflow-hidden"
       >
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-white text-base sm:text-lg">

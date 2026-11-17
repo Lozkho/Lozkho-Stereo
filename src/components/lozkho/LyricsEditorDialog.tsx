@@ -249,7 +249,7 @@ export function LyricsEditorDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-2xl max-h-[90dvh] overflow-hidden flex flex-col gap-0 p-0 bg-zinc-950 border-white/15"
+        className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col gap-0 p-0 bg-zinc-950 border-white/15"
         style={{
           ["--station-accent" as any]: accent,
         }}

@@ -91,7 +91,7 @@ export function LyricsPanel({
       </div>
 
       {mode === "normal" ? (
-        <div className="lyrics-text text-white/85 text-base leading-relaxed max-h-[40dvh] overflow-y-auto lozkho-scroll pr-2">
+        <div className="lyrics-text text-white/85 text-base leading-relaxed max-h-[40vh] overflow-y-auto lozkho-scroll pr-2">
           {lyrics.lines
             .filter((l) => l.text.trim() !== "" && !l.text.startsWith("["))
             .map((l, i) => (

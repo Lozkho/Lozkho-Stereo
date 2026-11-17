@@ -666,7 +666,7 @@ export function LyricsManagerView() {
   };
 
   return (
-    <div className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-32 min-h-[100dvh]">
+    <div className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-32 min-h-[100vh]">
       <header className="mb-3">
         <p className="text-[10px] uppercase tracking-widest text-white/40">
           Lozkho Stereo

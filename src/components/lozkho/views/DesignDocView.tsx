@@ -16,7 +16,7 @@ import {
 
 export function DesignDocView() {
   return (
-    <div className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-32 min-h-[100dvh] space-y-6">
+    <div className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-32 min-h-[100vh] space-y-6">
       <header>
         <p className="text-[10px] uppercase tracking-widest text-white/40">
           Lozkho Stereo · Fase 1

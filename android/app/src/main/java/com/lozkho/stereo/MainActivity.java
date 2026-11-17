@@ -1,9 +1,11 @@
 package com.lozkho.stereo;
 
 import android.app.Activity;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.KeyEvent;
 import android.view.Window;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -58,10 +60,19 @@ public class MainActivity extends Activity {
     // está viva aunque esté en segundo plano (stopped).
     private static volatile MainActivity instance;
 
-    // Los botones físicos de volumen NO se interceptan: siempre ajustan el
-    // volumen del sistema, con la pantalla encendida o bloqueada. La app no
-    // decide qué canción suena a partir de ellos. El cambio de emisora se
-    // hace desde la interfaz / widget, y el reproductor sigue su playlist.
+    // ---------------------------------------------------------------------------
+    // Botones físicos de volumen (uso en vehículo):
+    //   - Pulsación CORTA: SE CONSUME (no cambia el volumen del sistema; el
+    //     volumen real lo controla el equipo de audio del auto / el slider).
+    //   - MANTENCIÓN (~0.3 s): cambia de emisora, sin soltar el volante ni
+    //     mirar la pantalla. Se consume hasta ACTION_UP.
+    // Con la pantalla apagada Android no entrega KeyEvents a la Activity:
+    // en ese caso las teclas siguen ajustando el volumen del sistema.
+    // ---------------------------------------------------------------------------
+    private static final int VOLUME_LONG_PRESS_REPEAT = 6; // ~300ms
+    private boolean volumeConsumedUp = false;
+    private boolean volumeConsumedDown = false;
+    private AudioManager audioManager;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -246,6 +257,9 @@ public class MainActivity extends Activity {
         // JavascriptInterface para que el JS envíe info de la emisora activa
         // (widget + PlaybackService + notificación de medios).
         webView.addJavascriptInterface(new StationInterface(this), "AndroidStation");
+        // JavascriptInterface para el slider de volumen de la app
+        audioManager = (AudioManager) getSystemService(android.content.Context.AUDIO_SERVICE);
+        webView.addJavascriptInterface(new VolumeInterface(), "AndroidVolume");
         // JavascriptInterface para que el JS indique modo directorio antes
         // de pulsar el <input type=file>
         webView.addJavascriptInterface(new FilePickerInterface(), "AndroidFilePicker");
@@ -439,6 +453,67 @@ public class MainActivity extends Activity {
         filePathCallback = null;
     }
 
+
+    // ---------------------------------------------------------------------------
+    // Teclas de volumen: SIEMPRE se consumen mientras la app está en primer
+    // plano, para que NO modifiquen el volumen del sistema (auto). Solo la
+    // mantención cambia de emisora.
+    // ---------------------------------------------------------------------------
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int keyCode = event.getKeyCode();
+        if (keyCode != KeyEvent.KEYCODE_VOLUME_UP
+                && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
+            return super.dispatchKeyEvent(event);
+        }
+
+        final boolean isUp = keyCode == KeyEvent.KEYCODE_VOLUME_UP;
+        boolean consumed = isUp ? volumeConsumedUp : volumeConsumedDown;
+
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            if (event.getRepeatCount() >= VOLUME_LONG_PRESS_REPEAT && !consumed) {
+                if (isUp) volumeConsumedUp = true; else volumeConsumedDown = true;
+                changeStation(isUp); // arriba → siguiente, abajo → anterior
+            }
+            // Consumir TODOS los DOWN (cortos y largos): el volumen del sistema
+            // no cambia mientras la app tiene el foco.
+            return true;
+        }
+
+        // ACTION_UP: cerrar el estado de mantención y consumir también, para
+        // que soltar la tecla no ajuste el volumen.
+        if (consumed) {
+            if (isUp) volumeConsumedUp = false; else volumeConsumedDown = false;
+        }
+        return true;
+    }
+
+    /** Puente para el slider de volumen de la interfaz web. */
+    private class VolumeInterface {
+        @JavascriptInterface
+        public double getVolume() {
+            try {
+                if (audioManager == null) return 0.5;
+                int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                int cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+                return max > 0 ? (double) cur / (double) max : 0.5;
+            } catch (Exception e) {
+                return 0.5;
+            }
+        }
+
+        @JavascriptInterface
+        public void setVolume(double level) {
+            try {
+                if (audioManager == null) return;
+                int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                int value = (int) Math.round(Math.max(0, Math.min(1, level)) * max);
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0);
+            } catch (Exception e) {
+                android.util.Log.w("LozkhoVolume", "No se pudo ajustar el volumen", e);
+            }
+        }
+    }
 
     private String guessMimeType(String path) {
         if (path == null) return "application/octet-stream";
