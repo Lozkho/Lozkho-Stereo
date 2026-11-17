@@ -426,11 +426,14 @@ export function StationsListView() {
     // Si el JSON no trae thumbnailUri, busca por convención de nombre:
     // thumbnail.png, thumbnail.jpg, <station-slug>-thumbnail.*,
     // cover.* o folder.* en el mismo directorio que el M3U8/JSON.
-    const resolveThumbnail = async (
+    // Declaración de FUNCIÓN (no const) a propósito: el flujo de
+    // "directorio solo con audio" la invoca más arriba, y las funciones se
+    // izan (hoisting) — con `const` era un error TDZ en tiempo de ejecución.
+    async function resolveThumbnail(
       station: ParsedStation,
       allFiles: ImportedFile[],
       stationId: string
-    ): Promise<ParsedStation> => {
+    ): Promise<ParsedStation> {
       const uri = station.thumbnailUri;
       const imageFiles = allFiles.filter((f) =>
         /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)
@@ -531,7 +534,7 @@ export function StationsListView() {
       }
 
       return station;
-    };
+    }
 
     // Procesar SOLO archivos parseables. NO iterar sobre archivos de audio
     // binarios — el `.text()` fallaría en ellos y los contaría como errores.

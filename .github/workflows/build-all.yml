@@ -20,6 +20,8 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Lint
         run: bun run lint
+      - name: Unit tests
+        run: bun test
       - name: Build (static export)
         run: bun run build
       - name: Upload static export
@@ -195,6 +197,14 @@ jobs:
           echo "Build APK OK"
           mkdir -p ../dist
           cp "$APK" ../dist/LozkhoStereo-Android-debug.apk
+      - name: Verify APK signature (misma firma entre builds)
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME" -name apksigner -type f | head -1)
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs dist/LozkhoStereo-Android-debug.apk
+          else
+            echo "apksigner no encontrado en $ANDROID_HOME; se omite la verificación"
+          fi
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

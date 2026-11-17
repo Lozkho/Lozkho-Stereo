@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toaster";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 
 /**
@@ -85,7 +84,6 @@ export default function RootLayout({
       </head>
       <body className="antialiased bg-black text-foreground">
         {children}
-        <Toaster />
         <SonnerToaster position="top-center" richColors closeButton />
       </body>
     </html>
