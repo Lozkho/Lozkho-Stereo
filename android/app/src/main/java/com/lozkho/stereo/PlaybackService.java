@@ -75,8 +75,14 @@ public class PlaybackService extends Service {
     private static final long VOLUME_BURST_WINDOW_MS = 800;
 
     private BroadcastReceiver volumeChangedReceiver;
-    private int lastStreamType = -1;
-    private int lastVolumeValue = -1;
+    private AudioManager volumeAudioManager;
+    private android.os.Handler volumePollHandler;
+    private Runnable volumePollRunnable;
+    private android.os.PowerManager.WakeLock volumeWakeLock;
+
+    // Estado de ráfaga compartido (lo alimentan el broadcast y el polling)
+    private final java.util.HashMap<Integer, Integer> lastVolumeByStream =
+            new java.util.HashMap<>();
     private long volumeBurstStart = 0;
     private int volumeBurstCount = 0;
     private boolean volumeHoldTriggered = false;
@@ -91,15 +97,31 @@ public class PlaybackService extends Service {
         super.onCreate();
         createNotificationChannel();
         initMediaSession();
-        registerVolumeHoldReceiver();
+        startVolumeWatch();
     }
 
-    private void registerVolumeHoldReceiver() {
+    /**
+     * Detecta la mantención de volumen por DOS vías:
+     *  1. Broadcast VOLUME_CHANGED_ACTION (inmediato si llega).
+     *  2. Polling activo cada 120 ms, porque con la pantalla apagada Doze
+     *     puede diferir los broadcasts (era el motivo de que no cambiara).
+     * Los valores repetidos se ignoran, así que no hay doble disparo.
+     */
+    private void startVolumeWatch() {
         try {
-            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            if (am != null) {
-                lastVolumeValue = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+            volumeAudioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+
+            // WakeLock parcial: mantiene la CPU despierta para el polling
+            // mientras la pantalla está apagada.
+            android.os.PowerManager pm =
+                    (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                volumeWakeLock = pm.newWakeLock(
+                        android.os.PowerManager.PARTIAL_WAKE_LOCK,
+                        "LozkhoStereo:VolumeWatch");
+                volumeWakeLock.acquire();
             }
+
             volumeChangedReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
@@ -107,45 +129,63 @@ public class PlaybackService extends Service {
                     if (!VOLUME_CHANGED_ACTION.equals(intent.getAction())) return;
                     int stream = intent.getIntExtra(EXTRA_STREAM_TYPE, -1);
                     int value = intent.getIntExtra(EXTRA_STREAM_VALUE, -1);
-                    if (value < 0) return;
-
-                    // Aceptar CUALQUIER stream: con pantalla apagada el
-                    // dispositivo mueve STREAM_RING, no STREAM_MUSIC.
-                    if (stream != lastStreamType) {
-                        // Primer evento de otro stream: solo referencia
-                        lastStreamType = stream;
-                        lastVolumeValue = value;
-                        return;
-                    }
-                    final boolean up = value > lastVolumeValue;
-                    if (value == lastVolumeValue) return;
-                    lastVolumeValue = value;
-
-                    long now = System.currentTimeMillis();
-                    if (now - volumeBurstStart > VOLUME_BURST_WINDOW_MS) {
-                        // Nueva ráfaga (o primer evento tras un rato)
-                        volumeBurstStart = now;
-                        volumeBurstCount = 0;
-                        volumeHoldTriggered = false;
-                    }
-                    volumeBurstCount++;
-
-                    // Un toque corto = 1 evento → NO cambia nada.
-                    // Mantener pulsado = varios eventos seguidos → cambiar
-                    // de emisora una sola vez por ráfaga.
-                    if (!volumeHoldTriggered && volumeBurstCount >= VOLUME_BURST_COUNT) {
-                        volumeHoldTriggered = true;
-                        android.util.Log.i("LozkhoMedia", "Volumen mantenido (screen off) → cambio de emisora");
-                        MainActivity.postStationChange(up);
+                    if (stream >= 0 && value >= 0) {
+                        android.util.Log.d("LozkhoVolume",
+                                "broadcast stream=" + stream + " value=" + value);
+                        handleVolumeChange(stream, value);
                     }
                 }
             };
             IntentFilter filter = new IntentFilter(VOLUME_CHANGED_ACTION);
-            // ContextCompat añade la flag RECEIVER_* que exigen Android 13+
             ContextCompat.registerReceiver(this, volumeChangedReceiver, filter,
                     ContextCompat.RECEIVER_NOT_EXPORTED);
+
+            // Respaldo por polling
+            volumePollHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+            volumePollRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        if (volumeAudioManager != null) {
+                            handleVolumeChange(AudioManager.STREAM_RING,
+                                    volumeAudioManager.getStreamVolume(AudioManager.STREAM_RING));
+                            handleVolumeChange(AudioManager.STREAM_MUSIC,
+                                    volumeAudioManager.getStreamVolume(AudioManager.STREAM_MUSIC));
+                        }
+                    } catch (Exception ignored) {
+                    }
+                    volumePollHandler.postDelayed(this, 120);
+                }
+            };
+            volumePollHandler.post(volumePollRunnable);
+            android.util.Log.i("LozkhoVolume", "Vigilancia de volumen iniciada (broadcast + polling)");
         } catch (Exception e) {
-            android.util.Log.w("LozkhoMedia", "No se pudo registrar receiver de volumen", e);
+            android.util.Log.w("LozkhoVolume", "No se pudo iniciar vigilancia de volumen", e);
+        }
+    }
+
+    /** Ráfaga de cambios de volumen = mantención → cambiar de emisora.
+     *  Un toque aislado (1 cambio) no hace nada. */
+    private void handleVolumeChange(int stream, int value) {
+        Integer previous = lastVolumeByStream.get(stream);
+        lastVolumeByStream.put(stream, value);
+        if (previous == null || previous == value) return; // primera lectura o sin cambio
+
+        final boolean up = value > previous;
+        long now = System.currentTimeMillis();
+        if (now - volumeBurstStart > VOLUME_BURST_WINDOW_MS) {
+            volumeBurstStart = now;
+            volumeBurstCount = 0;
+            volumeHoldTriggered = false;
+        }
+        volumeBurstCount++;
+        android.util.Log.d("LozkhoVolume", "cambio stream=" + stream + " value=" + value
+                + " up=" + up + " rafaga=" + volumeBurstCount);
+
+        if (!volumeHoldTriggered && volumeBurstCount >= VOLUME_BURST_COUNT) {
+            volumeHoldTriggered = true;
+            android.util.Log.i("LozkhoVolume", "MANTENCION detectada → cambio de emisora up=" + up);
+            MainActivity.postStationChange(up);
         }
     }
 
@@ -292,6 +332,18 @@ public class PlaybackService extends Service {
 
     @Override
     public void onDestroy() {
+        if (volumePollHandler != null && volumePollRunnable != null) {
+            volumePollHandler.removeCallbacks(volumePollRunnable);
+            volumePollHandler = null;
+            volumePollRunnable = null;
+        }
+        if (volumeWakeLock != null) {
+            try {
+                if (volumeWakeLock.isHeld()) volumeWakeLock.release();
+            } catch (Exception ignored) {
+            }
+            volumeWakeLock = null;
+        }
         if (volumeChangedReceiver != null) {
             try {
                 unregisterReceiver(volumeChangedReceiver);

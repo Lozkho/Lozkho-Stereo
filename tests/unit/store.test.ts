@@ -5,6 +5,22 @@ import {
   computeCycleDurationMs,
 } from "../../src/lozkho/store";
 import type { Station } from "../../src/lozkho/types";
+import { sortStationsByBand } from "../../src/lozkho/format";
+
+describe("sortStationsByBand — orden por número de frecuencia", () => {
+  test("89.3 FM → 101.5 FM → 680 AM (ascendente por número)", () => {
+    const list = [
+      { band: "FM" as const, frequency: "101.5" },
+      { band: "AM" as const, frequency: "680" },
+      { band: "FM" as const, frequency: "89.3" },
+    ];
+    expect(sortStationsByBand(list).map((s) => s.frequency)).toEqual([
+      "89.3",
+      "101.5",
+      "680",
+    ]);
+  });
+});
 
 function makeStation(lastTickAt: number, positionMs: number, durationMs = 60_000): Station {
   return {

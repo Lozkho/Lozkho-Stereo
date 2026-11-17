@@ -47,20 +47,20 @@ export function parseFrequency(frequency: string): number {
 }
 
 /**
- * Ordena emisoras: primero AM en orden ascendente, luego FM en orden
- * ascendente. Las emisoras con la misma banda y frecuencia mantienen su
- * orden relativo original (sort estable).
+ * Ordena emisoras por el NÚMERO de frecuencia (ascendente), sin importar la
+ * banda: p. ej. 89.3 FM → 101.5 FM → 680 AM. Si dos emisoras tienen el mismo
+ * número, se desempata por banda (AM antes que FM) y luego establemente por
+ * el orden original. Se usa tanto en el dock como en el cambio de emisora
+ * con las teclas de volumen, para que ambos órdenes coincidan.
  */
 export function sortStationsByBand<T extends { band: "FM" | "AM"; frequency: string }>(
   stations: T[]
 ): T[] {
   return [...stations].sort((a, b) => {
-    // AM primero (0), FM después (1)
-    if (a.band !== b.band) {
-      return a.band === "AM" ? -1 : 1;
-    }
-    // Misma banda: ordenar por frecuencia ascendente
-    return parseFrequency(a.frequency) - parseFrequency(b.frequency);
+    const diff = parseFrequency(a.frequency) - parseFrequency(b.frequency);
+    if (diff !== 0) return diff;
+    if (a.band !== b.band) return a.band === "AM" ? -1 : 1;
+    return 0; // sort estable: conserva el orden original
   });
 }
 

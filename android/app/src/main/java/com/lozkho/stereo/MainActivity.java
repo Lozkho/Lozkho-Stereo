@@ -59,6 +59,7 @@ public class MainActivity extends Activity {
     // puedan pedir el cambio de emisora (inyección JS) mientras la Activity
     // está viva aunque esté en segundo plano (stopped).
     private static volatile MainActivity instance;
+    private static android.content.Context appContext;
 
     // ---------------------------------------------------------------------------
     // Botones físicos de volumen (uso en vehículo):
@@ -78,6 +79,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         instance = this;
+        appContext = getApplicationContext();
         requestWindowFeature(Window.FEATURE_NO_TITLE);
 
         webView = new WebView(this);
@@ -283,7 +285,25 @@ public class MainActivity extends Activity {
      */
     public static void postStationChange(boolean next) {
         final MainActivity activity = instance;
-        if (activity == null) return;
+        android.util.Log.i("LozkhoVolume",
+                "postStationChange next=" + next + " activityViva=" + (activity != null));
+        if (activity == null) {
+            // La Activity pudo ser destruida con pantalla apagada: guardar
+            // la acción para aplicarla al volver (solo si es reciente).
+            try {
+                if (appContext != null) {
+                    android.content.SharedPreferences prefs = appContext.getSharedPreferences(
+                            "lozkho_pending", android.content.Context.MODE_PRIVATE);
+                    prefs.edit()
+                            .putBoolean("pending_change", true)
+                            .putBoolean("pending_next", next)
+                            .putLong("pending_ts", System.currentTimeMillis())
+                            .apply();
+                }
+            } catch (Exception ignored) {
+            }
+            return;
+        }
         activity.runOnUiThread(() -> activity.changeStation(next));
     }
 
@@ -574,6 +594,21 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Aplicar un cambio de emisora que llegó mientras la Activity no
+        // estaba viva (pantalla apagada prolongada), solo si es reciente.
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences(
+                    "lozkho_pending", android.content.Context.MODE_PRIVATE);
+            if (prefs.getBoolean("pending_change", false)) {
+                final boolean next = prefs.getBoolean("pending_next", true);
+                final long ts = prefs.getLong("pending_ts", 0);
+                prefs.edit().putBoolean("pending_change", false).apply();
+                if (System.currentTimeMillis() - ts < 30_000 && webView != null) {
+                    webView.postDelayed(() -> changeStation(next), 600);
+                }
+            }
+        } catch (Exception ignored) {
+        }
         // Tras apagar/encender la pantalla o volver de otra app, el WebView
         // puede haber pausado el audio: pedimos al reproductor que lo reanude.
         if (webView != null) {
