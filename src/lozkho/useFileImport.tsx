@@ -41,8 +41,59 @@ export interface ImportedFile {
   relativePath?: string;
   /** MIME detectado por el navegador. */
   type: string;
-  /** File nativo del navegador — permite crear blob URLs para audio. */
-  file: File;
+  /**
+   * Archivo nativo del navegador (web/PC, o selector de archivos suelto en
+   * Android). No está disponible cuando el archivo llega por streaming SAF.
+   */
+  file?: File;
+  /**
+   * URL reproducible por streaming (Android SAF): https://lozkho.local/...,
+   * que el MainActivity resuelve contra el content:// URI original elegido
+   * por el usuario. Es persistente entre sesiones (se guarda tal cual en
+   * localStorage) y NO requiere copiar el audio a IndexedDB.
+   */
+  contentUrl?: string;
+}
+
+/**
+ * Convierte un content:// URI de SAF (Android) en una URL reproducible a
+ * través del interceptor https://lozkho.local/ del MainActivity.
+ *
+ * El path es el content URI codificado en Base64 URL-safe (con padding),
+ * que MainActivity decodifica con android.util.Base64.URL_SAFE y abre con
+ * ContentResolver (con soporte de Range para el seek del <audio>).
+ */
+export function lozkhoLocalUrl(contentUri: string): string {
+  const bytes = new TextEncoder().encode(contentUri);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]);
+  }
+  const b64 = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_");
+  return `https://lozkho.local/${b64}`;
+}
+
+/**
+ * Obtiene el contenido de un archivo importado como Blob, sea de un File
+ * nativo (PC/web) o de una URL de streaming lozkho.local (Android SAF).
+ */
+export async function importedFileBlob(f: ImportedFile): Promise<Blob> {
+  if (f.file) return f.file;
+  if (f.contentUrl) {
+    const res = await fetch(f.contentUrl);
+    if (!res.ok) {
+      throw new Error(`No se pudo leer "${f.name}" (HTTP ${res.status})`);
+    }
+    return res.blob();
+  }
+  throw new Error(`Archivo sin contenido accesible: ${f.name}`);
+}
+
+/** Obtiene el contenido de un archivo importado como texto (UTF-8). */
+export async function importedFileText(f: ImportedFile): Promise<string> {
+  if (f.file) return f.file.text();
+  const b = await importedFileBlob(f);
+  return b.text();
 }
 
 interface UseImportReturn {
@@ -83,8 +134,10 @@ export function useFileImport(
     // En Android WebView, el selector de directorios no funciona via
     // <input webkitdirectory>. En su lugar, llamamos directamente a la
     // JavascriptInterface nativa que abre ACTION_OPEN_DOCUMENT_TREE (SAF).
-    // Java lee los archivos, los convierte a base64 data URLs, y los
-    // envía de vuelta via window.__lozkhoDirectoryResult().
+    // Java lista los archivos y envía solo metadatos + content:// URI
+    // (sin leer el contenido); el audio se reproduce por streaming vía
+    // https://lozkho.local/... y el texto/binario pequeño se descarga
+    // con fetch() solo cuando hace falta.
     const androidPicker = (typeof window !== "undefined")
       ? (window as any).AndroidFilePicker
       : null;
@@ -93,37 +146,30 @@ export function useFileImport(
       // Acumulador de archivos recibidos individualmente
       const collectedFiles: ImportedFile[] = [];
 
-      // Callback que Java llama para CADA archivo individualmente
-      // (en lugar de un solo array grande que causa OOM)
+      // Callback que Java llama para CADA archivo individualmente.
+      // Desde el rework de importación, Java NO lee el contenido de los
+      // archivos: envía solo metadatos + el content:// URI de SAF. El audio
+      // se reproduce por streaming vía https://lozkho.local/... (interceptor
+      // del MainActivity con soporte de Range) y los archivos pequeños
+      // (M3U8, JSON, LRC, miniaturas) se descargan con fetch() solo cuando
+      // hacen falta. Antes cada MP3 viajaba completo como data-URL base64
+      // por evaluateJavascript → importaciones de minutos y audio
+      // duplicado en IndexedDB.
       (window as any).__lozkhoDirectoryFile = (fileObj: {
         name: string;
         relativePath: string;
         size: number;
         type: string;
-        dataUrl: string;
+        contentUri: string;
       }) => {
-        if (!fileObj || !fileObj.dataUrl) return;
-        try {
-          const arr = fileObj.dataUrl.split(",");
-          const mimeMatch = arr[0]?.match(/data:([^;]+)/);
-          const mime = mimeMatch?.[1] || fileObj.type || "application/octet-stream";
-          const byteString = atob(arr[1] || "");
-          const bytes = new Uint8Array(byteString.length);
-          for (let i = 0; i < byteString.length; i++) {
-            bytes[i] = byteString.charCodeAt(i);
-          }
-          const blob = new Blob([bytes], { type: mime });
-          const file = new File([blob], fileObj.name, { type: mime });
-          collectedFiles.push({
-            name: fileObj.name,
-            size: fileObj.size,
-            type: fileObj.type,
-            relativePath: fileObj.relativePath,
-            file,
-          });
-        } catch (err) {
-          console.error("Error procesando archivo:", err);
-        }
+        if (!fileObj || !fileObj.contentUri) return;
+        collectedFiles.push({
+          name: fileObj.name,
+          size: fileObj.size,
+          type: fileObj.type || "application/octet-stream",
+          relativePath: fileObj.relativePath,
+          contentUrl: lozkhoLocalUrl(fileObj.contentUri),
+        });
       };
 
       // Callback que Java llama cuando terminó de enviar todos los archivos
@@ -247,17 +293,24 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Lee la duración real de un archivo de audio (en milisegundos) usando
+ * Lee la duración real de una fuente de audio (en milisegundos) usando
  * un elemento <audio> temporal. Resuelve 0 si no se puede determinar.
+ *
+ * `source` puede ser:
+ *  - Un File/Blob nativo (web/PC) → se crea una blob URL temporal.
+ *  - Una URL reproducible (blob:, http(s):// o https://lozkho.local/...)
+ *    → se usa directamente; en Android el MainActivity responde la
+ *    petición de metadata vía el interceptor con soporte de Range.
  */
-export function readAudioDurationMs(file: File): Promise<number> {
+export function readAudioDurationMs(source: File | Blob | string): Promise<number> {
   return new Promise((resolve) => {
-    const url = URL.createObjectURL(file);
+    const isUrl = typeof source === "string";
+    const url = isUrl ? (source as string) : URL.createObjectURL(source as Blob);
     const audio = document.createElement("audio");
     audio.preload = "metadata";
     audio.src = url;
     const cleanup = () => {
-      URL.revokeObjectURL(url);
+      if (!isUrl) URL.revokeObjectURL(url);
       audio.remove();
     };
     audio.onloadedmetadata = () => {

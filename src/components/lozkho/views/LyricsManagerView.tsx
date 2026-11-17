@@ -28,7 +28,7 @@ import {
   type ImportExportFormat,
 } from "@/components/lozkho/ImportExportDialog";
 import { toast } from "sonner";
-import type { ImportedFile } from "@/lozkho/useFileImport";
+import { type ImportedFile, importedFileText } from "@/lozkho/useFileImport";
 import type { StationLyrics } from "@/lozkho/types";
 import {
   writeFileToDir,
@@ -445,7 +445,9 @@ export function LyricsManagerView() {
 
     for (const f of lrcFiles) {
       try {
-        const text = await f.file.text();
+        // File nativo (PC) o descarga por fetch desde la URL de streaming
+        // lozkho.local (Android SAF), según el origen del archivo.
+        const text = await importedFileText(f);
         const baseName = f.name.replace(/\.[^.]+$/, "");
         let lyrics: StationLyrics | null = null;
 

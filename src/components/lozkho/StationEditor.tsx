@@ -38,6 +38,7 @@ import { FONT_CATALOG, getFontFamily } from "@/lozkho/fonts";
 import type { Band, FontKey, Station, Track, Ad } from "@/lozkho/types";
 import { useFileImport, formatBytes, type ImportedFile, createBlobUrl, readAudioDurationMs } from "@/lozkho/useFileImport";
 import { audioStore } from "@/lozkho/audioStore";
+import { saveStationThumbnail } from "@/lozkho/thumbnail";
 import { toast } from "sonner";
 import {
   Type,
@@ -112,8 +113,10 @@ export function StationEditor({
 
   /**
    * Genera un Track a partir de un archivo importado.
-   * Crea una blob URL real, lee la duración del archivo (async), y
-   * guarda el File en IndexedDB para que persista tras recarga.
+   *
+   * - Android (streaming SAF): usa la URL lozkho.local persistente; NO se
+   *   copia el audio a IndexedDB (antes duplicaba toda la biblioteca).
+   * - PC/web: guarda el File en IndexedDB y usa su blob: URL.
    *
    * Si el archivo viene de un directorio (relativePath presente),
    * usa el nombre del archivo como título. Si el nombre tiene el patrón
@@ -123,8 +126,10 @@ export function StationEditor({
     const fullName = f.relativePath ?? f.name;
     const baseName = fullName.split("/").pop()!.replace(/\.[^.]+$/, "");
     const trackId = `trk-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`;
-    // Guardar en IndexedDB y obtener blob URL
-    const blobUrl = await audioStore.saveFile(trackId, f.file);
+    // Fuente de reproducción: streaming (Android) o blob (PC/IndexedDB)
+    const sourceUri = f.contentUrl
+      ? f.contentUrl
+      : await audioStore.saveFile(trackId, f.file!);
 
     // Si el nombre del archivo tiene "artista - título", separarlos
     let title = baseName;
@@ -141,17 +146,21 @@ export function StationEditor({
       artist,
       genre: undefined, // se puede editar manualmente después
       durationMs: 0,
-      sourceUri: blobUrl,
+      sourceUri,
       license: "Importado por el usuario",
     };
   };
 
   /**
    * Actualiza la duración de un track recién añadido tras leer la metadata
-   * real del archivo de audio.
+   * real del archivo de audio (File nativo o URL de streaming lozkho.local).
    */
-  const updateTrackDuration = async (stationId: string, trackId: string, file: File) => {
-    const durationMs = await readAudioDurationMs(file);
+  const updateTrackDuration = async (
+    stationId: string,
+    trackId: string,
+    source: File | string
+  ) => {
+    const durationMs = await readAudioDurationMs(source);
     if (durationMs > 0) {
       useLozkho.getState().updateStation(stationId, {
         playlist: useLozkho
@@ -183,8 +192,8 @@ export function StationEditor({
       const f = audioFiles[i];
       const track = await fileToTrack(f, i);
       addTrackToStation(stationId, track);
-      // Actualizar duración asíncronamente
-      updateTrackDuration(stationId, track.id, f.file);
+      // Actualizar duración asíncronamente (File nativo o URL streaming)
+      updateTrackDuration(stationId, track.id, f.file ?? f.contentUrl!);
     }
     toast.success(`${audioFiles.length} pista(s) añadida(s)`, {
       description: `${
@@ -221,7 +230,10 @@ export function StationEditor({
     for (let i = 0; i < audioFiles.length; i++) {
       const f = audioFiles[i];
       const adId = `ad-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`;
-      const blobUrl = await audioStore.saveFile(adId, f.file);
+      // Android (streaming) o PC (blob en IndexedDB)
+      const sourceUri = f.contentUrl
+        ? f.contentUrl
+        : await audioStore.saveFile(adId, f.file!);
       const fullName = f.relativePath ?? f.name;
       const baseName = fullName.split("/").pop()!.replace(/\.[^.]+$/, "");
       const ad: Ad = {
@@ -229,12 +241,12 @@ export function StationEditor({
         title: baseName,
         sponsor: "Anunciante",
         durationMs: 15000,
-        sourceUri: blobUrl,
+        sourceUri,
         license: "Importado por el usuario",
       };
       addAdToStation(stationId, ad);
-      // Actualizar duración asíncronamente
-      readAudioDurationMs(f.file).then((durationMs) => {
+      // Actualizar duración asíncronamente (File nativo o URL streaming)
+      readAudioDurationMs(f.file ?? f.contentUrl!).then((durationMs) => {
         if (durationMs > 0) {
           useLozkho.getState().updateStation(stationId, {
             ads: useLozkho
@@ -300,7 +312,7 @@ export function StationEditor({
     }
   };
 
-  const handleThumbnailFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleThumbnailFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
@@ -311,22 +323,22 @@ export function StationEditor({
     }
     if (file.size > 4 * 1024 * 1024) {
       toast.warning("Imagen grande", {
-        description: "Más de 4 MB. Recomendado: < 500 KB.",
+        description: "Más de 4 MB. Se reescalará automáticamente al guardar.",
       });
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUri = reader.result as string;
-      patch({ thumbnailUri: dataUri });
+    try {
+      // Reescala y guarda en IndexedDB — NO data-URL en localStorage.
+      const blobUrl = await saveStationThumbnail(station.id, file);
+      patch({ thumbnailUri: blobUrl });
       toast.success("Miniatura actualizada", {
-        description: `${file.name} (${formatBytes(file.size)})`,
+        description: `${file.name} (${formatBytes(file.size)}) · se conservará tras reiniciar la app.`,
       });
-    };
-    reader.onerror = () =>
-      toast.error("Error al leer la imagen", {
+    } catch (err) {
+      console.error("Error guardando miniatura:", err);
+      toast.error("Error al guardar la imagen", {
         description: "No se pudo procesar el archivo.",
       });
-    reader.readAsDataURL(file);
+    }
   };
 
   const handleAddTrackManual = () => {

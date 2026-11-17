@@ -116,7 +116,8 @@ export type PlayOrder =
 export type ProtoView =
   | "emisora"
   | "emisoras"
-  | "letras";
+  | "letras"
+  | "karaoke";
 
 export type LyricsMode = "normal" | "karaoke";
 

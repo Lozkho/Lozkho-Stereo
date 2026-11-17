@@ -452,11 +452,19 @@ export const useLozkho = create<LozkhoState>()(
         if (extended.length === 0) return st;
         let { currentItemIndex, positionMs } = st.playback;
         let delta = now - st.playback.lastTickAt;
-        // Capar delta a máximo 2 segundos para evitar saltos enormes
-        // cuando la pestaña estuvo inactiva o el equipo en suspensión.
-        // Sin este cap, un delta de horas haría saltar cientos de pistas.
+        // Capar el delta para evitar saltos enormes cuando la pestaña estuvo
+        // inactiva, el equipo en suspensión o la app estuvo cerrada (el
+        // lastTickAt persistido puede estar horas/días atrás).
+        //
+        // El cap es UNA duración completa del ciclo de la emisora
+        // (pistas + anuncios). Avanzar exactamente una vuelta deja la emisora
+        // en la misma (pista, posición) que tenía al cerrar la app — que es
+        // justo lo que espera el usuario: "continuar donde lo dejé" — sin
+        // procesar cientos de saltos de pistas que nadie escuchó.
         if (delta <= 0) return st;
-        if (delta > 60000) delta = 60000;
+        const cycleMs = computeCycleDurationMs(st);
+        const capMs = cycleMs > 0 ? cycleMs : 60_000;
+        if (delta > capMs) delta = capMs;
         positionMs += delta;
         // Avanza de ítem si corresponde
         // IMPORTANTE: si un track tiene durationMs <= 0 (porque aún no se
@@ -569,19 +577,24 @@ export const useLozkho = create<LozkhoState>()(
               try {
                 const parsed = JSON.parse(value);
                 if (parsed && parsed.state && parsed.state.stations) {
-                  // Strip sourceUri de todos los tracks y ads
+                  // Strip SOLO los sourceUri blob: (temporales de la sesión,
+                  // se restauran desde IndexedDB vía restoreAllUrls). Las URLs
+                  // http(s):// y lozkho.local (streaming SAF de Android) son
+                  // la única referencia al audio: se conservan.
+                  const stripBlobUri = (u: any) =>
+                    u && typeof u === "string" && u.startsWith("blob:")
+                      ? null
+                      : u;
                   parsed.state.stations = parsed.state.stations.map(
                     (s: any) => ({
                       ...s,
                       playlist: (s.playlist || []).map((t: any) => ({
                         ...t,
-                        // Guardar sourceUri como null — se restaurará
-                        // desde IndexedDB vía restoreAllUrls()
-                        sourceUri: null,
+                        sourceUri: stripBlobUri(t.sourceUri),
                       })),
                       ads: (s.ads || []).map((a: any) => ({
                         ...a,
-                        sourceUri: null,
+                        sourceUri: stripBlobUri(a.sourceUri),
                       })),
                       // Resetear thumbnailUri también (se restaura desde IndexedDB)
                       thumbnailUri: s.thumbnailUri
@@ -668,53 +681,38 @@ export const useLozkho = create<LozkhoState>()(
         return safeStorage as any;
       }),
       // Solo persistir datos significativos; no transient UI state.
-      // Importante: NO persistir playback (positionMs, lastTickAt, etc.)
-      // porque lastTickAt se vuelve stale al recargar y causa saltos enormes
-      // en el reloj virtual (delta = ahora - último guardado = horas/días).
       //
-      // CRÍTICO: NO persistir sourceUri ni thumbnailUri cuando son blob: URLs
-      // o URLs de Lozkho (lozkho.local/...). Estas URLs son MUY largas
-      // (especialmente las de Lozkho que codifican content:// URIs en base64)
-      // y con 250+ pistas pueden exceder el límite de localStorage (5-10MB).
+      // PERSISTIMOS playback (currentItemIndex, positionMs, lastTickAt):
+      // al reabrir la app, tickClock usa lastTickAt para avanzar el reloj
+      // virtual por el tiempo transcurrido (capado a una vuelta de ciclo,
+      // ver tickClock) y la emisora continúa desde el punto anterior en
+      // lugar de volver a empezar. Antes se reseteaba a (0, 0) aquí y al
+      // reabrir todo empezaba desde el principio.
       //
-      // Los sourceUri se restauran desde IndexedDB (audioStore) al cargar
-      // la app vía restoreAllUrls(). Guardar null aquí es seguro.
+      // sourceUri: SOLO se despojan las blob: URLs (temporales de la sesión,
+      // se restauran desde IndexedDB al cargar vía restoreAllUrls). Las URLs
+      // http(s):// y https://lozkho.local/... (streaming SAF de Android, que
+      // codifica el content:// URI elegido por el usuario) son cortas y
+      // reproducibles entre sesiones: se conservan tal cual.
       partialize: (state) => ({
         stations: state.stations.map((s) => ({
           ...s,
-          // Resetear playback al hidratar: empezar desde la primera pista
-          playback: {
-            currentItemIndex: 0,
-            positionMs: 0,
-            lastTickAt: Date.now(),
-            running: true,
-            isAd: false,
-          },
-          // Strip sourceUri de tracks: si es blob: o URL de Lozkho,
-          // guardar null (se restaura desde IndexedDB). Si es http(s)://
-          // remota, mantenerla (es reproducible sin IndexedDB).
           playlist: (s.playlist || []).map((t) => ({
             ...t,
             sourceUri:
-              t.sourceUri &&
-              (t.sourceUri.startsWith("blob:") ||
-                t.sourceUri.startsWith("https://lozkho.local/") ||
-                t.sourceUri.startsWith("lozkho-file://"))
+              t.sourceUri && t.sourceUri.startsWith("blob:")
                 ? null
                 : t.sourceUri,
           })),
-          // Strip sourceUri de ads también
           ads: (s.ads || []).map((a) => ({
             ...a,
             sourceUri:
-              a.sourceUri &&
-              (a.sourceUri.startsWith("blob:") ||
-                a.sourceUri.startsWith("https://lozkho.local/") ||
-                a.sourceUri.startsWith("lozkho-file://"))
+              a.sourceUri && a.sourceUri.startsWith("blob:")
                 ? null
                 : a.sourceUri,
           })),
-          // Strip thumbnailUri si es blob: (se restaura desde IndexedDB)
+          // Strip thumbnailUri si es blob: (se restaura desde IndexedDB).
+          // Las data: URLs legacy se conservan por compatibilidad.
           thumbnailUri:
             s.thumbnailUri && s.thumbnailUri.startsWith("blob:")
               ? null
@@ -768,15 +766,28 @@ export const useLozkho = create<LozkhoState>()(
           }
         }
 
-        // Resetear playback de todas las emisoras al migrar
-        // (evita saltos por lastTickAt stale)
+        // Normalizar playback de todas las emisoras al migrar:
+        // PRESERVAR currentItemIndex y positionMs guardados (para poder
+        // continuar donde se quedó), pero actualizar lastTickAt a "ahora"
+        // para que el primer tick tras la migración no aplique un delta de
+        // días (tickClock también lo caparía a un ciclo, pero mejor partir
+        // de una base limpia).
         if (persisted.stations && Array.isArray(persisted.stations)) {
+          const now = Date.now();
           persisted.stations = persisted.stations.map((s: any) => ({
             ...s,
             playback: {
-              currentItemIndex: 0,
-              positionMs: 0,
-              lastTickAt: Date.now(),
+              currentItemIndex:
+                Number.isInteger(s?.playback?.currentItemIndex) &&
+                s.playback.currentItemIndex >= 0
+                  ? s.playback.currentItemIndex
+                  : 0,
+              positionMs:
+                typeof s?.playback?.positionMs === "number" &&
+                s.playback.positionMs >= 0
+                  ? s.playback.positionMs
+                  : 0,
+              lastTickAt: now,
               running: true,
               isAd: false,
             },

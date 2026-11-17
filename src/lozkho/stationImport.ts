@@ -494,24 +494,46 @@ export async function resolveTracksWithAudioFiles(
     }
 
     if (matched) {
-      // IMPORTANTE: usar el track.id como key en IndexedDB para que
-      // `restoreAllUrls` (que busca por track.id) pueda encontrarlo tras
-      // recargar la página. Si el track no tiene id todavía, generar uno
-      // aquí mismo y devolverlo en el track para que StationsListView lo
-      // preserve al reasignar ids.
+      // IMPORTANTE: usar el track.id como key en IndexedDB (cuando hay que
+      // guardar un blob) para que `restoreAllUrls` (que busca por track.id)
+      // pueda encontrarlo tras recargar la página.
       const trackId =
         (track as any).id ?? `trk-imp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const blobUrl = await audioStore.saveFile(trackId, matched.file);
-      lozkhoLog.debug(
-        `Import: audio guardado en IndexedDB para "${track.title}"`,
-        { key: trackId, file: matched.name, size: matched.file.size }
-      );
-      newPlaylist.push({
-        ...track,
-        id: trackId,
-        sourceUri: blobUrl,
-        license: (track.license ?? "Importado") + " · audio real asociado",
-      });
+
+      // Android (streaming SAF): la URL lozkho.local codifica el content://
+      // URI elegido por el usuario; es corta, reproducible y persistente.
+      // NO se copia el audio a IndexedDB (antes duplicaba toda la música).
+      if (matched.contentUrl) {
+        newPlaylist.push({
+          ...track,
+          id: trackId,
+          sourceUri: matched.contentUrl,
+          license: (track.license ?? "Importado") + " · audio real asociado (streaming)",
+        });
+      } else if (matched.file) {
+        // Web/PC: guardar el blob en IndexedDB y usar su blob: URL.
+        const blobUrl = await audioStore.saveFile(trackId, matched.file);
+        lozkhoLog.debug(
+          `Import: audio guardado en IndexedDB para "${track.title}"`,
+          { key: trackId, file: matched.name, size: matched.file.size }
+        );
+        newPlaylist.push({
+          ...track,
+          id: trackId,
+          sourceUri: blobUrl,
+          license: (track.license ?? "Importado") + " · audio real asociado",
+        });
+      } else {
+        // Sin contenido accesible: dejar la URI original (relativa o vacía).
+        lozkhoLog.warn(
+          `Import: archivo encontrado pero sin contenido para "${track.title}"`,
+          { uri }
+        );
+        newPlaylist.push({
+          ...track,
+          sourceUri: uri || "demo:no-audio",
+        });
+      }
     } else {
       // No se encontró audio real: dejar la URI original (relativa o vacía).
       // El reproductor ignorará silenciosamente pistas no reproducibles.

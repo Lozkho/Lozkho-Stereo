@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { useLozkho, useActiveStation, computeCycleDurationMs } from "@/lozkho/store";
+import { saveStationThumbnail } from "@/lozkho/thumbnail";
 import { formatDurationLong, gradientThumbnail, hexToRgba } from "@/lozkho/format";
 import { FONT_CATALOG, getFontFamily } from "@/lozkho/fonts";
 import type { FontKey } from "@/lozkho/types";
@@ -73,7 +74,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsPanelProps) {
       thumbnailInputRef.current.click();
     }
   };
-  const handleThumbnailFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleThumbnailFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
@@ -85,23 +86,28 @@ export function SettingsPanel({ open, onOpenChange }: SettingsPanelProps) {
     if (file.size > 4 * 1024 * 1024) {
       toast.warning("Imagen grande", {
         description:
-          "El archivo pesa más de 4 MB. Se recomienda reducirlo antes de importar para no inflar la base de datos.",
+          "El archivo pesa más de 4 MB. Se reescalará automáticamente al guardarlo.",
       });
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUri = reader.result as string;
-      setStationThumbnail(dataUri);
+    try {
+      const stationId = useLozkho.getState().activeStationId;
+      if (!stationId) {
+        toast.error("No hay emisora activa");
+        return;
+      }
+      // Reescala (máx. 512 px) y guarda en IndexedDB — NO como data-URL
+      // en localStorage (quota limitada y pérdida de miniaturas).
+      const blobUrl = await saveStationThumbnail(stationId, file);
+      setStationThumbnail(blobUrl);
       toast.success("Miniatura actualizada", {
-        description: `Importada: ${file.name} (${(file.size / 1024).toFixed(0)} KB)`,
+        description: `${file.name} (${(file.size / 1024).toFixed(0)} KB) · se conservará tras reiniciar la app.`,
       });
-    };
-    reader.onerror = () => {
-      toast.error("Error al leer la imagen", {
+    } catch (err) {
+      console.error("Error guardando miniatura:", err);
+      toast.error("Error al guardar la imagen", {
         description: "No se pudo procesar el archivo. Intenta con otro.",
       });
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   // Editor completo de emisora (modal con pestañas para playlist, anuncios, etc.)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -63,7 +63,7 @@ export function LyricsEditorDialog({
   const linkLyricsToTrack = useLozkho((s) => s.linkLyricsToTrack);
 
   const [tab, setTab] = useState<Tab>("edit");
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() => buildLRC(lyrics));
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -82,16 +82,11 @@ export function LyricsEditorDialog({
   >([]);
   const [hasSearched, setHasSearched] = useState(false);
 
-  // Inicializar draft al abrir
-  useEffect(() => {
-    if (open) {
-      setDraft(buildLRC(lyrics));
-      setIsDirty(false);
-      setTab("edit");
-      setSearchResults([]);
-      setHasSearched(false);
-    }
-  }, [open, lyrics.id]); // no dependemos de lyrics completa para no resetear en cada tick
+  // NOTA: el "reset al abrir" NO se hace con useEffect (la regla
+  // react-hooks/set-state-in-effect lo prohíbe porque provoca renders en
+  // cascada). En su lugar, el componente se remonta con `key` desde
+  // LyricsPanel cada vez que se abre o cambia la letra: los useState de
+  // arriba se reinicializan solos en cada remount.
 
   // Detectar cambios manuales
   const handleDraftChange = (v: string) => {
@@ -254,7 +249,7 @@ export function LyricsEditorDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col gap-0 p-0 bg-zinc-950 border-white/15"
+        className="max-w-2xl max-h-[90dvh] overflow-hidden flex flex-col gap-0 p-0 bg-zinc-950 border-white/15"
         style={{
           ["--station-accent" as any]: accent,
         }}
