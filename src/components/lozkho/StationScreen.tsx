@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { useLozkho, useActiveStation, buildExtendedPlaylist } from "@/lozkho/store";
 import {
   formatClock,
@@ -12,8 +11,7 @@ import {
   sortStationsByBand,
 } from "@/lozkho/format";
 import { getFontFamily } from "@/lozkho/fonts";
-import type { Station, StationLyrics } from "@/lozkho/types";
-import { LyricsPanel } from "./LyricsPanel";
+import type { Station } from "@/lozkho/types";
 import { AdBanner } from "./AdBanner";
 import { CycleEstimate } from "./CycleEstimate";
 import { Settings, Radio, Music2, Disc3, Bell, Infinity as InfinityIcon, ImageIcon } from "lucide-react";
@@ -27,114 +25,17 @@ export function StationScreen({ onOpenSettings }: StationScreenProps) {
   const tick = useLozkho((s) => s.tick);
   const setActiveStation = useLozkho((s) => s.setActiveStation);
   const stations = useLozkho((s) => s.stations);
-  const lyricsMode = useLozkho((s) => s.lyricsMode);
-  const allLyrics = useLozkho((s) => s.lyrics);
-
-  // Hook para búsqueda automática de letras (debe ir antes del early return)
-  const autoSearchDone = useRef<Set<string>>(new Set());
-  const currentTrackId = station
-    ? (() => {
-        const ext = buildExtendedPlaylist(station);
-        const cur = ext[station.playback.currentItemIndex % ext.length];
-        if (cur?.kind === "track") {
-          const track = station.playlist.find((t) => t.id === cur.ref.id);
-          return track?.id;
-        }
-        return undefined;
-      })()
-    : undefined;
-
-  useEffect(() => {
-    if (!station || !currentTrackId) return;
-    if (autoSearchDone.current.has(currentTrackId)) return;
-    autoSearchDone.current.add(currentTrackId);
-    // Buscar si la pista no tiene letra
-    const track = station.playlist.find((t) => t.id === currentTrackId);
-    if (!track || track.lyricsId) return;
-    if (!track.title || track.title.length < 3) return;
-    const searchAuto = async () => {
-      try {
-        const params = new URLSearchParams();
-        params.set("track_name", track.title);
-        const res = await fetch(
-          `https://lrclib.net/api/search?${params.toString()}`,
-          { headers: { Accept: "application/json" } }
-        );
-        if (!res.ok) return;
-        const results = await res.json();
-        if (!Array.isArray(results) || results.length === 0) return;
-        const best = results.find(
-          (r: any) => r.syncedLyrics && r.syncedLyrics.trim()
-        ) || results[0];
-        if (!best || !best.syncedLyrics) return;
-        const lines: { timeMs: number; text: string }[] = [];
-        for (const line of best.syncedLyrics.split(/\r?\n/)) {
-          const m = line.match(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\](.*)/);
-          if (m) {
-            const mm = parseInt(m[1]);
-            const ss = parseInt(m[2]);
-            const frac = m[3] ? parseInt(m[3].padEnd(3, "0"), 10) : 0;
-            lines.push({ timeMs: mm * 60000 + ss * 1000 + frac, text: m[4].trim() });
-          }
-        }
-        if (lines.length === 0) return;
-        lines.sort((a, b) => a.timeMs - b.timeMs);
-        const newLyrics: StationLyrics = {
-          id: `lyr-auto-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          matchKey: best.trackName || track.title,
-          title: best.trackName || track.title,
-          artist: best.artistName,
-          source: "online",
-          offsetMs: 0,
-          lines,
-          license: "LRCLIB (MIT) — búsqueda automática",
-        };
-        useLozkho.getState().addLyrics(newLyrics);
-        useLozkho.getState().linkLyricsToTrack(station.id, track.id, newLyrics.id);
-      } catch {
-        // Silencioso
-      }
-    };
-    searchAuto();
-  }, [currentTrackId, station]);
 
   if (!station) return null;
 
   const extended = buildExtendedPlaylist(station);
   const current = extended[station.playback.currentItemIndex % extended.length];
-  const currentTrack: Station["playlist"][number] | undefined =
-    current?.kind === "track"
-      ? station.playlist.find((t) => t.id === current.ref.id) ??
-        station.playlist[current?.index ?? 0]
-      : undefined;
   const isAd = station.playback.isAd;
-
-  // Buscar letra por id, coincidencia exacta de título, o coincidencia normalizada
-  const currentTitleLower = currentTrack?.title.toLowerCase() ?? "";
-  const currentTitleNormalized = currentTitleLower
-    .replace(/[^a-z0-9]/g, ""); // quitar acentos, espacios, guiones
-
-  const lyrics: StationLyrics | undefined = currentTrack
-    ? allLyrics.find(
-        (l) => {
-          // 1. Por lyricsId directo
-          if (currentTrack.lyricsId && l.id === currentTrack.lyricsId) return true;
-          // 2. Por matchKey exacto (case-insensitive)
-          if (l.matchKey.toLowerCase() === currentTitleLower) return true;
-          // 3. Por matchKey normalizado (sin acentos, espacios, guiones)
-          const matchKeyNorm = l.matchKey.toLowerCase().replace(/[^a-z0-9]/g, "");
-          if (matchKeyNorm && matchKeyNorm === currentTitleNormalized) return true;
-          // 4. Por título de la letra (si el LRC tenía cabecera [ti:])
-          if (l.title.toLowerCase() === currentTitleLower) return true;
-          return false;
-        }
-      )
-    : undefined;
 
   const accent = station.colors.accent;
   const accent2 = station.colors.accent2;
   const styleVars: React.CSSProperties = {
-    // CSS vars para LyricsPanel y karaoke
+    // CSS vars del tema de la emisora (glows del degradado)
     ["--station-accent" as any]: accent,
     ["--station-accent-muted" as any]: hexToRgba(accent, 0.55),
     ["--station-accent-glow" as any]: hexToRgba(accent, 0.32),
@@ -274,33 +175,6 @@ export function StationScreen({ onOpenSettings }: StationScreenProps) {
       {/* Estimación discreta del ciclo */}
       <div className="px-4 pt-3">
         <CycleEstimate station={station} />
-      </div>
-
-      {/* Letras (prioridad visual) */}
-      <div className="px-4 pt-4">
-        {lyrics ? (
-          <LyricsPanel
-            lyrics={lyrics}
-            positionMs={
-              // Para el prototipo, la sincronización se basa en el reloj de la pista.
-              station.playback.positionMs
-            }
-            mode={lyricsMode}
-            isAd={isAd}
-            accent={accent}
-            track={currentTrack}
-            stationId={station.id}
-          />
-        ) : (
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-center">
-            <p className="text-sm text-white/60">
-              Esta pista no tiene letra asociada.
-            </p>
-            <p className="text-xs text-white/40 mt-1">
-              Importa letras .lrc desde la sección “Letras” para activarlas aquí.
-            </p>
-          </div>
-        )}
       </div>
 
       {/* Dock de emisoras (solo la activa suena) */}

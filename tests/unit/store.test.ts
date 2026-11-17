@@ -65,6 +65,18 @@ describe("tickClock — persistencia del punto de reproducción", () => {
     expect(extended[st.playback.currentItemIndex]?.ref.id).toBe("t1");
   });
 
+  test("la emisora activa con audio real NO avanza con el reloj virtual (lo hace <audio>)", () => {
+    const now = 1_000_000;
+    const st = makeStation(now - 60_000, 10_000); // canción de 60s, ya a 10s
+    useLozkho.setState({ stations: [st], activeStationId: st.id });
+    // Un tick de 60s debería saltar de pista si el reloj virtual la moviera
+    useLozkho.getState().tickClock(now);
+    const after = useLozkho.getState().stations[0];
+    expect(after.playback.currentItemIndex).toBe(0);
+    expect(after.playback.positionMs).toBe(10_000);
+    expect(after.playback.lastTickAt).toBe(now - 60_000);
+  });
+
   test("pistas con durationMs=0 usan mínimo de 30s y no ciclan sin control", () => {
     const now = 10_000_000;
     useLozkho.setState({ stations: [makeStation(now - 24 * 3600_000, 0, 0)] });

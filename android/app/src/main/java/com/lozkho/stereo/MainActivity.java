@@ -282,6 +282,24 @@ public class MainActivity extends Activity {
         activity.runOnUiThread(() -> activity.changeStation(next));
     }
 
+    /**
+     * Avanza/retrocede la PISTA de la emisora activa (lo usan la notificación
+     * de medios, los botones de headset/Bluetooth y MediaSession). Se inyecta
+     * el mismo JS que los controles de la app.
+     */
+    public static void postTrackChange(boolean next) {
+        final MainActivity activity = instance;
+        if (activity == null) return;
+        final String js = next
+            ? "window.__lozkhoNextTrack && window.__lozkhoNextTrack()"
+            : "window.__lozkhoPrevTrack && window.__lozkhoPrevTrack()";
+        activity.runOnUiThread(() -> {
+            if (activity.webView != null) {
+                activity.webView.evaluateJavascript(js, null);
+            }
+        });
+    }
+
     private void requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS)
@@ -531,7 +549,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // Nada especial: la MediaSession vive en PlaybackService.
+        // Tras apagar/encender la pantalla o volver de otra app, el WebView
+        // puede haber pausado el audio: pedimos al reproductor que lo reanude.
+        if (webView != null) {
+            webView.evaluateJavascript(
+                "window.__lozkhoResumeAudio && window.__lozkhoResumeAudio()", null);
+        }
     }
 
     @Override

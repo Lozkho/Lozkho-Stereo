@@ -89,12 +89,13 @@ public class PlaybackService extends Service {
             mediaSession.setCallback(new MediaSessionCompat.Callback() {
                 @Override
                 public void onSkipToNext() {
-                    MainActivity.postStationChange(true);
+                    // Media button de headset/Bluetooth → siguiente PISTA
+                    MainActivity.postTrackChange(true);
                 }
 
                 @Override
                 public void onSkipToPrevious() {
-                    MainActivity.postStationChange(false);
+                    MainActivity.postTrackChange(false);
                 }
             });
             mediaSession.setActive(true);
@@ -194,10 +195,12 @@ public class PlaybackService extends Service {
                 ? intent.getAction() : ACTION_START;
 
         if (ACTION_PREV.equals(action)) {
-            // Botón "Anterior" de la notificación (fuera de la Activity).
-            MainActivity.postStationChange(false);
+            // Botón "Anterior" de la notificación / headset → PISTA anterior.
+            MainActivity.postTrackChange(false);
         } else if (ACTION_NEXT.equals(action)) {
-            MainActivity.postStationChange(true);
+            // Botón "Siguiente" de la notificación / headset → PISTA siguiente.
+            // (El cambio de EMISORA es con volumen mantenido y con el widget.)
+            MainActivity.postTrackChange(true);
         } else if (ACTION_STOP.equals(action)) {
             stopForeground(true);
             stopSelf();

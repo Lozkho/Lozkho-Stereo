@@ -448,6 +448,30 @@ export const useLozkho = create<LozkhoState>()(
         // Auto-reproducción indefinida: TODAS las emisoras con playback.running
         // avanzan. Siempre es true por diseño (no hay forma de pausar).
         if (!st.playback.running) return st;
+
+        // La emisora ACTIVA con audio real la gobierna el elemento <audio>
+        // vía onTimeUpdate (AudioPlayer). Si el reloj virtual también la
+        // avanzara, un tick atrasado (pantalla apagada, Doze, WebView
+        // throttled) saltaría de pista a mitad de canción y cambiaría el
+        // audio.src while playing → cortes aleatorios y silencio.
+        // Las emisoras de fondo y las pistas demo (sin audio real) siguen
+        // avanzando con el reloj virtual.
+        if (st.id === s.activeStationId) {
+          const ext = buildExtendedPlaylist(st);
+          const cur = ext[st.playback.currentItemIndex % ext.length];
+          const src =
+            cur?.kind === "track"
+              ? st.playlist.find((t) => t.id === cur.ref.id)?.sourceUri ?? ""
+              : "";
+          if (
+            src.startsWith("blob:") ||
+            src.startsWith("http") ||
+            src.includes("lozkho.local")
+          ) {
+            return st;
+          }
+        }
+
         const extended = buildExtendedPlaylist(st);
         if (extended.length === 0) return st;
         let { currentItemIndex, positionMs } = st.playback;

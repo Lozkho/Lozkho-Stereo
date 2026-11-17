@@ -51,6 +51,9 @@ export function AudioPlayer() {
   // Indica si ya hemos llamado a play() para la pista actual y está
   // pendiente o reproduciéndose. Evita llamadas duplicadas.
   const playAttemptedRef = useRef<boolean>(false);
+  // Índice que se esperaba al cargar la pista actual. Evita que onEnded y
+  // tickClock avancen DOS veces el mismo ítem (canciones que se cortan).
+  const expectedIndexRef = useRef<number | null>(null);
   // Indica si el usuario ya ha interactuado (para desbloquear autoplay).
   const userInteractedRef = useRef<boolean>(false);
 
@@ -63,6 +66,7 @@ export function AudioPlayer() {
     if (extended.length === 0) return;
     const nextIndex =
       (activeStation.playback.currentItemIndex + 1) % extended.length;
+    expectedIndexRef.current = nextIndex;
     st.updateStation(activeStation.id, {
       playback: {
         ...activeStation.playback,
@@ -73,6 +77,82 @@ export function AudioPlayer() {
       },
     });
   }, []);
+
+  /** Pista anterior. Comportamiento estándar: si llevamos >3 s, reinicia
+   *  la actual; si no, va a la anterior de verdad. */
+  const skipToPrev = useCallback(() => {
+    const st = useLozkho.getState();
+    const active = st.stations.find((s) => s.id === st.activeStationId);
+    if (!active) return;
+    const ext = buildExtendedPlaylist(active);
+    if (ext.length === 0) return;
+    if (active.playback.positionMs > 3000) {
+      st.updateStation(active.id, {
+        playback: { ...active.playback, positionMs: 0, lastTickAt: Date.now() },
+      });
+      const audio = audioRef.current;
+      if (audio) {
+        try {
+          audio.currentTime = 0;
+          if (audio.paused) void audio.play().catch(() => {});
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
+    const prevIndex =
+      ((active.playback.currentItemIndex - 1) % ext.length + ext.length) % ext.length;
+    expectedIndexRef.current = prevIndex;
+    st.updateStation(active.id, {
+      playback: {
+        ...active.playback,
+        currentItemIndex: prevIndex,
+        positionMs: 0,
+        lastTickAt: Date.now(),
+        isAd: ext[prevIndex]?.kind === "ad",
+      },
+    });
+  }, []);
+
+  /** Reanuda el <audio> si quedó pausado (pantalla apagada, foco perdido). */
+  const resumeAudio = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || !audio.src || !audio.paused) return;
+    void audio.play().catch((err: any) => {
+      if (err?.name !== "AbortError" && err?.name !== "NotAllowedError") {
+        console.warn("[AudioPlayer] Error al reanudar:", err);
+      }
+    });
+  }, []);
+
+  // Puente para el código nativo (notificación de medios / headset):
+  //   __lozkhoNextTrack / __lozkhoPrevTrack → PISTA
+  //   __lozkhoVolumeUp / __lozkhoVolumeDown → EMISORA (volumen mantenido)
+  useEffect(() => {
+    (window as any).__lozkhoNextTrack = () => skipToNext();
+    (window as any).__lozkhoPrevTrack = () => skipToPrev();
+    (window as any).__lozkhoResumeAudio = () => resumeAudio();
+    return () => {
+      delete (window as any).__lozkhoNextTrack;
+      delete (window as any).__lozkhoPrevTrack;
+      delete (window as any).__lozkhoResumeAudio;
+    };
+  }, [skipToNext, skipToPrev, resumeAudio]);
+
+  // Al volver del fondo (desbloqueo, cambio de app) el WebView puede haber
+  // pausado el audio: lo reanudamos explícitamente.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") resumeAudio();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onVisible);
+    };
+  }, [resumeAudio]);
 
   // Detectar la primera interacción del usuario para desbloquear autoplay.
   // En Android WebView (TWA), el audio está bloqueado hasta que el usuario
@@ -128,6 +208,7 @@ export function AudioPlayer() {
       stationIdRef.current = station.id;
       currentItemIndexRef.current = currentIdx;
       playAttemptedRef.current = false;
+      expectedIndexRef.current = currentIdx;
     }
 
     if (current.kind === "track") {
@@ -297,8 +378,19 @@ export function AudioPlayer() {
     };
   }, []);
 
-  // Cuando el audio termina, avanzar al siguiente item
+  // Cuando el audio termina, avanzar al siguiente item — pero SOLO si el
+  // índice sigue siendo el que cargamos. Si tickClock o un botón ya lo
+  // movieron, saltar de nuevo provocaría el "cambio de canción fantasma".
   const handleEnded = useCallback(() => {
+    const st = useLozkho.getState();
+    const active = st.stations.find((s) => s.id === st.activeStationId);
+    if (!active) return;
+    if (
+      expectedIndexRef.current !== null &&
+      active.playback.currentItemIndex !== expectedIndexRef.current
+    ) {
+      return; // alguien ya avanzó el índice
+    }
     skipToNext();
   }, [skipToNext]);
 
