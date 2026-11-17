@@ -407,10 +407,6 @@ export function SettingsPanel({ open, onOpenChange }: SettingsPanelProps) {
                     </>
                   )}
                 </p>
-                <p className="text-[10px] text-white/45 mt-1 leading-snug">
-                  Formatos: JPG, PNG, WebP, GIF. Recomendado: 512×512 px, &lt;
-                  500 KB.
-                </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -456,30 +452,6 @@ export function SettingsPanel({ open, onOpenChange }: SettingsPanelProps) {
           </Section>
 
           <Separator className="bg-white/10" />
-
-          {/* Comportamiento de reproducción (informativo) */}
-          <Section icon={<Info size={14} />} title="Auto-reproducción continua">
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-              <p className="text-[12px] text-white/80 leading-relaxed">
-                <strong className="text-white">Auto-reproducción indefinida.</strong>{" "}
-                Todas las emisoras se reproducen en simultáneo desde que abre la
-                app. Solo la emisora <strong className="text-white">activa</strong>{" "}
-                es audible (decodifica audio); las demás avanzan virtualmente en
-                segundo plano.
-              </p>
-              <p className="text-[11px] text-white/55 leading-snug mt-2">
-                No hay botón de pausa global: el reloj virtual de cada emisora
-                avanza siempre. Al cambiar de emisora, la reproducción no se
-                interrumpe — la nueva emisora continúa donde estaba y la anterior
-                sigue en silencio.
-              </p>
-              <p className="text-[11px] text-white/45 leading-snug mt-2">
-                En la app nativa, el sistema (MediaSession) podrá pausar
-                temporalmente ante llamadas, auriculares desconectados o acciones
-                del sistema; la app reanudará automáticamente cuando sea posible.
-              </p>
-            </div>
-          </Section>
 
           <Separator className="bg-white/10" />
 

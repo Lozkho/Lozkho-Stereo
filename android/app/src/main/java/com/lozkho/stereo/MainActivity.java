@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.view.KeyEvent;
 import android.view.Window;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -59,24 +58,10 @@ public class MainActivity extends Activity {
     // está viva aunque esté en segundo plano (stopped).
     private static volatile MainActivity instance;
 
-    // ---------------------------------------------------------------------------
-    // Botones físicos de volumen → cambio de emisora
-    //
-    // Política (patrón tipo reproductores de música, p. ej. Musicolet):
-    //   - Pulsación CORTA: NO se consume → el sistema ajusta el volumen
-    //     del medio con normalidad.
-    //   - MANTENCIÓN (~0.4 s, cuando el sistema empieza a repetir el
-    //     KeyEvent): se cambia de emisora y se consumen los eventos hasta
-    //     ACTION_UP para no disparar el cambio más de una vez.
-    //
-    // Android NO permite interceptar estas teclas con la pantalla bloqueada
-    // o la app en background (ver DecisionsView D7): para eso están las
-    // acciones prev/siguiente de la notificación de medios y los botones
-    // del widget.
-    // ---------------------------------------------------------------------------
-    private static final int LONG_PRESS_REPEAT_THRESHOLD = 8; // ~400ms (repeats ~50ms)
-    private boolean volumeLongConsumedUp = false;
-    private boolean volumeLongConsumedDown = false;
+    // Los botones físicos de volumen NO se interceptan: siempre ajustan el
+    // volumen del sistema, con la pantalla encendida o bloqueada. La app no
+    // decide qué canción suena a partir de ellos. El cambio de emisora se
+    // hace desde la interfaz / widget, y el reproductor sigue su playlist.
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -104,7 +89,13 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
-        settings.setUseWideViewPort(false);
+        // CRÍTICO: true para que el WebView RESPETE el meta viewport
+        // `width=device-width, initial-scale=1` que emite Next.js. Con false,
+        // Android ignora el meta y usa un lienzo de ~980px (ancho de escritorio)
+        // sin zoom/paneo → la UI se ve desproporcionada y NO se puede
+        // desplazar ni tocar correctamente.
+        settings.setUseWideViewPort(true);
+        // No escalar "fit all" al cargar: initial-scale=1 del meta viewport.
         settings.setLoadWithOverviewMode(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
@@ -448,47 +439,6 @@ public class MainActivity extends Activity {
         filePathCallback = null;
     }
 
-    // ---------------------------------------------------------------------------
-    // Botones de volumen: pulsación corta → volumen del sistema (NO se
-    // consume); mantención → cambio de emisora (se consume hasta ACTION_UP).
-    // ---------------------------------------------------------------------------
-    @Override
-    public boolean dispatchKeyEvent(KeyEvent event) {
-        int keyCode = event.getKeyCode();
-        if (keyCode != KeyEvent.KEYCODE_VOLUME_UP
-                && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
-            return super.dispatchKeyEvent(event);
-        }
-
-        final boolean isUp = keyCode == KeyEvent.KEYCODE_VOLUME_UP;
-        boolean longConsumed = isUp ? volumeLongConsumedUp : volumeLongConsumedDown;
-
-        if (event.getAction() == KeyEvent.ACTION_DOWN) {
-            // El sistema repite el KeyEvent (~50ms) mientras se mantiene la
-            // tecla. A partir del umbral, se considera "mantención" → cambiar
-            // de emisora una sola vez y consumir los siguientes repeats.
-            if (event.getRepeatCount() >= LONG_PRESS_REPEAT_THRESHOLD && !longConsumed) {
-                if (isUp) volumeLongConsumedUp = true; else volumeLongConsumedDown = true;
-                changeStation(isUp);
-                return true;
-            }
-            if (longConsumed) {
-                // Ya se cambió de emisora en esta mantención: consumir el resto
-                return true;
-            }
-            // Pulsación corta: NO consumir → el sistema ajusta el volumen.
-            return super.dispatchKeyEvent(event);
-        } else { // ACTION_UP
-            if (longConsumed) {
-                // Cerrar la mantención y consumir el UP para no ajustar el
-                // volumen tras el cambio de emisora.
-                if (isUp) volumeLongConsumedUp = false; else volumeLongConsumedDown = false;
-                return true;
-            }
-            // Soltado antes del umbral: comportamiento normal del sistema.
-            return super.dispatchKeyEvent(event);
-        }
-    }
 
     private String guessMimeType(String path) {
         if (path == null) return "application/octet-stream";

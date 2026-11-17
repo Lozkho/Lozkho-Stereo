@@ -11,7 +11,6 @@ import { StationsListView } from "./views/StationsListView";
 import { LyricsManagerView } from "./views/LyricsManagerView";
 import { KaraokeView } from "./views/KaraokeView";
 import { AudioPlayer } from "./AudioPlayer";
-import { DebugLogButton } from "./DebugLogButton";
 import { Radio, ListMusic, FileText, Mic } from "lucide-react";
 import { toast } from "sonner";
 
@@ -259,9 +258,6 @@ export function PrototypeShell() {
         open={settingsOpen}
         onOpenChange={(o) => openSettings(o)}
       />
-
-      {/* Botón flotante de logs de diagnóstico */}
-      <DebugLogButton />
     </div>
   );
 }

@@ -171,13 +171,6 @@ export function ImportExportDialog({
             )}
             {mode === "import" ? "Importar" : "Exportar"} {kindLabel}
           </DialogTitle>
-          <DialogDescription className="text-white/65 text-xs sm:text-sm">
-            {mode === "import"
-              ? supportsDirExport
-                ? `En PC, al elegir «Directorio» se abrirá el selector nativo de carpetas del sistema.`
-                : `Selecciona archivos o un directorio para importar ${kindLabel}.`
-              : `Elige el formato y destino de exportación para tus ${kindLabel}.`}
-          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3 overflow-y-auto lozkho-scroll flex-1 pr-1 -mr-1">
@@ -320,17 +313,7 @@ export function ImportExportDialog({
                     </div>
                   </label>
                 </RadioGroup>
-              ) : (
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                  <div className="flex items-center gap-1.5 text-[12px] font-semibold text-white">
-                    <HardDrive size={12} /> Descargas del navegador
-                  </div>
-                  <p className="text-[10px] text-white/55 leading-snug mt-0.5">
-                    Este entorno no soporta selector de carpeta. Se usará la
-                    carpeta de descargas configurada en el navegador.
-                  </p>
-                </div>
-              )}
+              ) : null}
 
               {/* Botón elegir carpeta (solo si target=directory) */}
               {exportTarget === "directory" && supportsDirExport && (
@@ -407,17 +390,6 @@ export function ImportExportDialog({
             </div>
           )}
 
-          {/* Indicador de soporte FS Access API (PC) */}
-          {mode === "export" && supportsDirExport && (
-            <div className="rounded-lg border border-sky-500/30 bg-sky-500/[0.06] p-2 flex gap-2">
-              <Info size={12} className="text-sky-300 mt-0.5 shrink-0" />
-              <p className="text-[11px] text-sky-100/85 leading-snug">
-                Tu navegador soporta File System Access API. Puedes elegir
-                cualquier carpeta del sistema y los archivos se escribirán
-                directamente ahí, sin pasar por la carpeta de descargas.
-              </p>
-            </div>
-          )}
         </div>
 
         <DialogFooter className="shrink-0 pt-1 border-t border-white/5">
@@ -522,25 +494,6 @@ function ImportPickerButton({
       )}
 
       {/* Hint para Android/navegadores sin FS Access API */}
-      {pickMode === "directory" && !canPickDirectory() && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-2 flex gap-2">
-          <AlertTriangle
-            size={12}
-            className="text-amber-300 mt-0.5 shrink-0"
-          />
-          <p className="text-[11px] text-amber-100/85 leading-snug">
-            Este entorno no soporta selector nativo de carpeta. Se usará el
-            selector de documentos del sistema, que permite elegir una carpeta
-            y leerá todos los archivos recursivamente.
-          </p>
-        </div>
-      )}
-
-      {pickedFiles.length === 0 && !lastDirName && (
-        <p className="text-[10px] text-white/40 leading-snug text-center">
-          No se ha seleccionado nada todavía.
-        </p>
-      )}
     </>
   );
 }

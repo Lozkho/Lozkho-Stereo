@@ -186,15 +186,6 @@ export function StationScreen({ onOpenSettings }: StationScreenProps) {
           tick={tick}
         />
       </div>
-
-      {/* Indicador discreto de reproducción continua */}
-      <div className="px-4 pb-32 text-center">
-        <p className="text-[11px] text-white/40 inline-flex items-center gap-1.5">
-          <InfinityIcon size={12} />
-          Auto-reproducción continua · todas las emisoras en simultáneo · solo
-          suena la activa
-        </p>
-      </div>
     </div>
   );
 }
@@ -340,9 +331,6 @@ function StationDock({ stations, activeId, onSelect }: StationDockProps) {
         <h3 className="text-xs font-semibold uppercase tracking-widest text-white/60">
           Reproduciendo en segundo plano
         </h3>
-        <span className="text-[10px] text-white/45 normal-case tracking-normal">
-          · solo suena la activa
-        </span>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {sortStationsByBand(stations).map((s) => {
@@ -430,10 +418,6 @@ function StationDock({ stations, activeId, onSelect }: StationDockProps) {
           );
         })}
       </div>
-      <p className="mt-3 text-[11px] text-white/40 leading-snug">
-        Todas las emisoras se reproducen en simultáneo. Solo la activa decodifica
-        audio; las demás avanzan virtualmente sin interrumpirse.
-      </p>
     </div>
   );
 }

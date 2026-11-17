@@ -1560,42 +1560,6 @@ export function StationsListView() {
         <Plus size={18} /> Crear nueva emisora
       </button>
 
-      <section className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-        <h2 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
-          <Info size={14} className="text-white/60" />
-          Formatos y límites de importación/exportación
-        </h2>
-        <p className="text-[12px] text-white/65 leading-relaxed">
-          Formato principal: <strong>M3U8</strong> (UTF-8) + JSON sidecar para
-          metadatos. Alternativas: M3U clásico, JSON puro, ZIP completo.
-        </p>
-        <ul className="mt-2 space-y-1 text-[11px] text-white/55 list-disc pl-5">
-          <li>
-            M3U8/M3U solo referencia rutas a archivos; no transporta metadatos
-            de género, carátula ni letras. Esos se enriquecen desde las
-            etiquetas ID3/FLAC/Vorbis al importar.
-          </li>
-          <li>
-            En Android 10+ las rutas se conservan como <code>content://</code>{" "}
-            persistentes (SAF con <code>takePersistableUriPermission</code>), no
-            como rutas de archivos planas.
-          </li>
-          <li>
-            En Windows se conservan rutas absolutas (con permiso de carpeta) o
-            symlinks bajo el directorio de datos de la app.
-          </li>
-          <li>
-            Las emisoras se pueden exportar como JSON junto al M3U8 para no
-            perder frecuencia, colores, mood, eslogan y programación de anuncios.
-          </li>
-          <li>
-            El ZIP completo contiene todas las emisoras (M3U8 + JSON por cada
-            una) pero <strong>no</strong> los archivos de audio — solo
-            referencias. Útil para backups de configuración.
-          </li>
-        </ul>
-      </section>
-
       {/* Diálogos */}
       <ImportExportDialog
         key={`import-stations-${importStationOpen}`}

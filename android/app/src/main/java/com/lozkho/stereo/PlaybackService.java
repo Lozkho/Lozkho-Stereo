@@ -87,16 +87,9 @@ public class PlaybackService extends Service {
             mediaSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS
                     | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
             mediaSession.setCallback(new MediaSessionCompat.Callback() {
-                @Override
-                public void onSkipToNext() {
-                    // Media button de headset/Bluetooth → siguiente PISTA
-                    MainActivity.postTrackChange(true);
-                }
-
-                @Override
-                public void onSkipToPrevious() {
-                    MainActivity.postTrackChange(false);
-                }
+                // Sin acciones de salto: la app reproduce la playlist que le
+                // corresponde a la emisora. El usuario NO controla qué canción
+                // suena desde fuera (notificación / headset / volumen).
             });
             mediaSession.setActive(true);
             android.util.Log.i("LozkhoMedia", "MediaSession activa (PlaybackService)");
@@ -109,10 +102,7 @@ public class PlaybackService extends Service {
         if (mediaSession == null) return;
         try {
             mediaSession.setPlaybackState(new PlaybackStateCompat.Builder()
-                    .setActions(PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-                            | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
-                            | PlaybackStateCompat.ACTION_PLAY
-                            | PlaybackStateCompat.ACTION_PAUSE)
+                    .setActions(0) // sin controles de transporte para el usuario
                     .setState(PlaybackStateCompat.STATE_PLAYING, 0, 1f)
                     .build());
             mediaSession.setMetadata(new MediaMetadataCompat.Builder()
@@ -150,12 +140,9 @@ public class PlaybackService extends Service {
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setContentIntent(contentPi)
                 .setShowWhen(false)
-                .setColor(accentColor)
-                .addAction(0, "Anterior", buildActionPendingIntent(ACTION_PREV, 1))
-                .addAction(0, "Siguiente", buildActionPendingIntent(ACTION_NEXT, 2))
-                .setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
-                        .setMediaSession(mediaSession != null ? mediaSession.getSessionToken() : null)
-                        .setShowActionsInCompactView(0, 1));
+                .setColor(accentColor);
+        // Sin addAction(): la notificación solo informa de la emisora en
+        // curso; no permite saltar canciones ni emisoras.
         return builder.build();
     }
 
@@ -194,14 +181,9 @@ public class PlaybackService extends Service {
         String action = intent != null && intent.getAction() != null
                 ? intent.getAction() : ACTION_START;
 
-        if (ACTION_PREV.equals(action)) {
-            // Botón "Anterior" de la notificación / headset → PISTA anterior.
-            MainActivity.postTrackChange(false);
-        } else if (ACTION_NEXT.equals(action)) {
-            // Botón "Siguiente" de la notificación / headset → PISTA siguiente.
-            // (El cambio de EMISORA es con volumen mantenido y con el widget.)
-            MainActivity.postTrackChange(true);
-        } else if (ACTION_STOP.equals(action)) {
+        // La notificación no tiene acciones: solo se informa del estado.
+        // No hay ACTION_PREV/NEXT que permitan saltar pistas desde fuera.
+        if (ACTION_STOP.equals(action)) {
             stopForeground(true);
             stopSelf();
             return START_NOT_STICKY;
