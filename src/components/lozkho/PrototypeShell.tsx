@@ -5,7 +5,7 @@ import type { TouchEvent } from "react";
 import { useLozkho, buildExtendedPlaylist } from "@/lozkho/store";
 import { audioStore } from "@/lozkho/audioStore";
 import { lozkhoLog } from "@/lozkho/logger";
-import { formatFrequency } from "@/lozkho/format";
+import { formatFrequency, sortStationsByBand } from "@/lozkho/format";
 import { StationScreen } from "./StationScreen";
 import { SettingsPanel } from "./SettingsPanel";
 import { StationsListView } from "./views/StationsListView";
@@ -213,15 +213,19 @@ export function PrototypeShell() {
     const stations = useLozkho.getState().stations;
     if (stations.length === 0) return;
 
+    // Orden FIJO y predecible: AM primero, después FM, y dentro de cada
+    // banda por número de frecuencia ascendente. Volumen arriba avanza en
+    // ese orden; abajo retrocede, con vuelta al principio/final.
     (window as any).__lozkhoVolumeUp = () => {
       const s = useLozkho.getState();
       if (s.stations.length === 0) return;
-      const idx = s.stations.findIndex((st) => st.id === s.activeStationId);
-      const nextIdx = idx < s.stations.length - 1 ? idx + 1 : 0;
-      const next = s.stations[nextIdx];
+      const sorted = sortStationsByBand(s.stations);
+      const idx = sorted.findIndex((st) => st.id === s.activeStationId);
+      const nextIdx = idx < sorted.length - 1 ? idx + 1 : 0;
+      const next = sorted[nextIdx];
       s.setActiveStation(next.id);
       toast.success("Emisora siguiente", {
-        description: next.name,
+        description: `${next.frequency} ${next.band} · ${next.name}`,
         duration: 1500,
       });
     };
@@ -229,12 +233,13 @@ export function PrototypeShell() {
     (window as any).__lozkhoVolumeDown = () => {
       const s = useLozkho.getState();
       if (s.stations.length === 0) return;
-      const idx = s.stations.findIndex((st) => st.id === s.activeStationId);
-      const prevIdx = idx > 0 ? idx - 1 : s.stations.length - 1;
-      const prev = s.stations[prevIdx];
+      const sorted = sortStationsByBand(s.stations);
+      const idx = sorted.findIndex((st) => st.id === s.activeStationId);
+      const prevIdx = idx > 0 ? idx - 1 : sorted.length - 1;
+      const prev = sorted[prevIdx];
       s.setActiveStation(prev.id);
       toast.success("Emisora anterior", {
-        description: prev.name,
+        description: `${prev.frequency} ${prev.band} · ${prev.name}`,
         duration: 1500,
       });
     };

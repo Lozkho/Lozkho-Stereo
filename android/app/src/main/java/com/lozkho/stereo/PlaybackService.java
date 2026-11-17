@@ -18,6 +18,7 @@ import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
 
 /**
  * Servicio de reproducción en primer plano (foreground, tipo mediaPlayback).
@@ -60,18 +61,21 @@ public class PlaybackService extends Service {
 
     // --- Detección de mantención de volumen con pantalla apagada ------------
     // Con el screen off, Android NO entrega KEYCODE_VOLUME a la Activity, pero
-    // SÍ emite android.media.VOLUME_CHANGED_ACTION. Un toque aislado produce
-    // UN broadcast (se ignora); una mantención produce una ráfaga (~10/s).
-    // Cuando detectamos >=4 cambios en 700ms, cambiamos de emisora. Con la
-    // pantalla encendida este receiver NO dispara: MainActivity consume todos
-    // los KeyEvents de volumen y el sistema no cambia el stream.
+    // SÍ emite android.media.VOLUME_CHANGED_ACTION. Ojo: en ese estado el
+    // Moto G7 Power ajusta STREAM_RING (vibra), NO STREAM_MUSIC — por eso no
+    // se puede filtrar por stream. Un toque aislado produce UN broadcast (se
+    // ignora); una mantención produce una ráfaga (~10/s). Al detectar >=3
+    // cambios en 800ms, cambiamos de emisora. Con la pantalla encendida este
+    // receiver NO dispara: MainActivity consume los KeyEvents y el sistema
+    // no emite el broadcast (no hay doble cambio).
     private static final String VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION";
     private static final String EXTRA_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE";
     private static final String EXTRA_STREAM_VALUE = "android.media.EXTRA_VOLUME_STREAM_VALUE";
-    private static final int VOLUME_BURST_COUNT = 4;
-    private static final long VOLUME_BURST_WINDOW_MS = 700;
+    private static final int VOLUME_BURST_COUNT = 3;
+    private static final long VOLUME_BURST_WINDOW_MS = 800;
 
     private BroadcastReceiver volumeChangedReceiver;
+    private int lastStreamType = -1;
     private int lastVolumeValue = -1;
     private long volumeBurstStart = 0;
     private int volumeBurstCount = 0;
@@ -102,11 +106,19 @@ public class PlaybackService extends Service {
                     if (intent == null || intent.getAction() == null) return;
                     if (!VOLUME_CHANGED_ACTION.equals(intent.getAction())) return;
                     int stream = intent.getIntExtra(EXTRA_STREAM_TYPE, -1);
-                    if (stream != AudioManager.STREAM_MUSIC) return;
                     int value = intent.getIntExtra(EXTRA_STREAM_VALUE, -1);
                     if (value < 0) return;
 
-                    final boolean up = lastVolumeValue >= 0 && value > lastVolumeValue;
+                    // Aceptar CUALQUIER stream: con pantalla apagada el
+                    // dispositivo mueve STREAM_RING, no STREAM_MUSIC.
+                    if (stream != lastStreamType) {
+                        // Primer evento de otro stream: solo referencia
+                        lastStreamType = stream;
+                        lastVolumeValue = value;
+                        return;
+                    }
+                    final boolean up = value > lastVolumeValue;
+                    if (value == lastVolumeValue) return;
                     lastVolumeValue = value;
 
                     long now = System.currentTimeMillis();
@@ -129,7 +141,9 @@ public class PlaybackService extends Service {
                 }
             };
             IntentFilter filter = new IntentFilter(VOLUME_CHANGED_ACTION);
-            registerReceiver(volumeChangedReceiver, filter);
+            // ContextCompat añade la flag RECEIVER_* que exigen Android 13+
+            ContextCompat.registerReceiver(this, volumeChangedReceiver, filter,
+                    ContextCompat.RECEIVER_NOT_EXPORTED);
         } catch (Exception e) {
             android.util.Log.w("LozkhoMedia", "No se pudo registrar receiver de volumen", e);
         }
