@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import type { StationLyrics, Track } from "@/lozkho/types";
 import { cx, hexToRgba } from "@/lozkho/format";
 import { Pencil } from "lucide-react";
 import { LyricsEditorDialog } from "./LyricsEditorDialog";
+import { KaraokeLines } from "./KaraokeLines";
 
 interface LyricsPanelProps {
   lyrics: StationLyrics;
@@ -27,31 +28,7 @@ export function LyricsPanel({
   track,
   stationId,
 }: LyricsPanelProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const [editorOpen, setEditorOpen] = useState(false);
-
-  const activeIndex = useMemo(() => {
-    if (mode !== "karaoke") return -1;
-    let idx = -1;
-    for (let i = 0; i < lyrics.lines.length; i++) {
-      if (lyrics.lines[i].timeMs <= positionMs) idx = i;
-      else break;
-    }
-    return idx;
-  }, [lyrics, positionMs, mode]);
-
-  // Auto-scroll a la línea activa.
-  useEffect(() => {
-    if (mode !== "karaoke") return;
-    const container = containerRef.current;
-    if (!container) return;
-    const active = container.querySelector(
-      `[data-lyric-idx="${activeIndex}"]`
-    ) as HTMLElement | null;
-    if (active) {
-      active.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, [activeIndex, mode]);
 
   if (isAd) {
     return (
@@ -103,7 +80,7 @@ export function LyricsPanel({
               type="button"
               onClick={() => setEditorOpen(true)}
               aria-label="Editar o reemplazar la letra"
-              title="¿Esta letra no es de la canción? Edítala o búscala aquí"
+              title="¿Esta letra no es de esta canción? Edítala o búscala aquí"
               className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border border-white/15 text-white/70 hover:text-white hover:bg-white/10 active:scale-95 transition"
               style={{ ["--station-accent" as any]: accent }}
             >
@@ -114,7 +91,7 @@ export function LyricsPanel({
       </div>
 
       {mode === "normal" ? (
-        <div className="lyrics-text text-white/85 text-base leading-relaxed max-h-[40vh] overflow-y-auto lozkho-scroll pr-2">
+        <div className="lyrics-text text-white/85 text-base leading-relaxed max-h-[40dvh] overflow-y-auto lozkho-scroll pr-2">
           {lyrics.lines
             .filter((l) => l.text.trim() !== "" && !l.text.startsWith("["))
             .map((l, i) => (
@@ -124,28 +101,12 @@ export function LyricsPanel({
             ))}
         </div>
       ) : (
-        <div
-          ref={containerRef}
-          className="lyrics-text text-center max-h-[40vh] overflow-y-auto lozkho-scroll pr-2"
-        >
-          <div className="h-[14vh]" />
-          {lyrics.lines.map((l, i) => (
-            <p
-              key={i}
-              data-lyric-idx={i}
-              className={cx(
-                "py-2 text-lg sm:text-xl font-semibold transition-all",
-                i === activeIndex && "karaoke-active scale-[1.02]",
-                i < activeIndex && "karaoke-past",
-                i > activeIndex && "karaoke-future",
-                l.text.startsWith("[") && "italic text-white/35"
-              )}
-            >
-              {l.text}
-            </p>
-          ))}
-          <div className="h-[20vh]" />
-        </div>
+        <KaraokeLines
+          lyrics={lyrics}
+          positionMs={positionMs}
+          accent={accent}
+          variant="panel"
+        />
       )}
 
       {lyrics.license && (
@@ -156,6 +117,7 @@ export function LyricsPanel({
 
       {track && stationId && (
         <LyricsEditorDialog
+          key={editorOpen ? `open-${lyrics.id}` : "closed"}
           open={editorOpen}
           onOpenChange={setEditorOpen}
           lyrics={lyrics}

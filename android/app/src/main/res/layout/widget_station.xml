@@ -72,4 +72,39 @@
             android:ellipsize="end"
             android:text="—" />
     </LinearLayout>
+
+    <!-- Botones de cambio de emisora (◀ anterior / ▶ siguiente).
+         Cambian de emisora sin abrir la app si está viva. -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        android:layout_marginStart="6dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/widget_prev"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:textSize="20sp"
+            android:gravity="center"
+            android:paddingStart="10dp"
+            android:paddingEnd="6dp"
+            android:textColor="#CCFFFFFF"
+            android:background="#22FFFFFF"
+            android:text="◀" />
+
+        <TextView
+            android:id="@+id/widget_next"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_marginStart="6dp"
+            android:textSize="20sp"
+            android:gravity="center"
+            android:paddingStart="6dp"
+            android:paddingEnd="10dp"
+            android:textColor="#CCFFFFFF"
+            android:background="#22FFFFFF"
+            android:text="▶" />
+    </LinearLayout>
 </LinearLayout>

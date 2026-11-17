@@ -1,0 +1,43 @@
+# Dependencias y builds
+node_modules/
+out/
+.next/
+dist/
+build/
+
+# Tauri (Windows)
+src-tauri/target/
+src-tauri/gen/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+android/.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# NOTA: android/debug.keystore SÍ se versiona a propósito: garantiza que
+# todos los APK debug (locales y de GitHub Actions) tengan la misma firma
+# y se puedan instalar unos sobre otros sin perder datos del usuario.
+# Nunca versionar un keystore de PUBLICACIÓN (release).
+
+# Entorno
+.env
+.env.local
+.env.*.local
+
+# Editores / SO
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

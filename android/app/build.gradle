@@ -7,19 +7,40 @@ android {
         applicationId "com.lozkho.stereo"
         minSdk 24
         targetSdk 34
-        versionCode 4
-        versionName "0.2.1"
+        versionCode 5
+        versionName "0.2.2"
+    }
+    signingConfigs {
+        // Keystore debug FIJO versionado en el repo (android/debug.keystore,
+        // contraseñas estándar de Android debug: "android"/"android").
+        // Antes el build usaba ~/.android/debug.keystore, que GitHub Actions
+        // regenera en cada ejecución → cada APK tenía una firma distinta →
+        // instalar uno nuevo exigía desinstalar el anterior y se perdían los
+        // datos del usuario (localStorage/IndexedDB del WebView).
+        // Con este keystore, todos los APK debug firman igual y se instalan
+        // como actualización (adb install -r) conservando los datos.
+        debug {
+            storeFile rootProject.file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
     }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
+            // Para un APK de publicación, configurar los secretos de GitHub:
+            // KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
+            // y añadir aquí signingConfig signingConfigs.release.
         }
     }
     // CRÍTICO: AAPT2 por defecto ignora directorios que empiezan con _
     // El pattern por defecto incluye <dir>_* que excluye _next/
     // Override del pattern para NO excluir _next/
     aaptOptions {
-        // Quitar <dir>_* del pattern por defecto
         // Pattern por defecto: !.svn:!.git:!.ds_store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*.scc:*~
         // Nuestro pattern: igual pero SIN <dir>_*
         ignoreAssetsPattern "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*.scc:*~"
@@ -39,4 +60,8 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.core:core:1.12.0'
     implementation 'androidx.documentfile:documentfile:1.0.1'
+    // MediaSessionCompat + NotificationCompat.MediaStyle para el servicio de
+    // reproducción en segundo plano (PlaybackService) y la notificación de
+    // medios en pantalla de bloqueo.
+    implementation 'androidx.media:media:1.7.0'
 }

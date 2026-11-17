@@ -1,19 +1,9 @@
 package com.lozkho.stereo;
 
 import android.app.Activity;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
-import android.content.Context;
-import android.content.Intent;
-import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.media.AudioManager;
-import android.media.session.MediaSession;
 import android.view.KeyEvent;
 import android.view.Window;
 import android.webkit.WebChromeClient;
@@ -24,19 +14,36 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.ValueCallback;
 import android.webkit.JavascriptInterface;
-import androidx.core.app.NotificationCompat;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.documentfile.provider.DocumentFile;
 import java.io.InputStream;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import org.json.JSONObject;
 
+/**
+ * Activity principal de Lozkho Stereo.
+ *
+ * Arquitectura de reproducción:
+ *  - El WebView aloja la PWA (assets) con TODO el reloj virtual y el
+ *    elemento <audio> que decodifica la emisora activa.
+ *  - PlaybackService (foreground service mediaPlayback) mantiene el proceso
+ *    vivo mientras suena la emisora y expone la notificación de medios
+ *    (MediaStyle) + MediaSession en la pantalla de bloqueo.
+ *  - MainActivity mantiene una instancia estática (instance) para que el
+ *    servicio y el widget puedan inyectar JS en el WebView (cambio de
+ *    emisora) mientras la Activity está viva.
+ *
+ * Importación de directorios (Android SAF):
+ *  - Java NO lee el contenido de los archivos: envía solo metadatos
+ *    (nombre, ruta relativa, tamaño, MIME) + el content:// URI. El JS
+ *    construye URLs https://lozkho.local/<base64(uri)> que el
+ *    shouldInterceptRequest resuelve con streaming + soporte de Range.
+ *    Antes cada MP3 viajaba entero como data-URL base64 por
+ *    evaluateJavascript → importaciones de minutos y audio duplicado.
+ */
 public class MainActivity extends Activity {
 
     private WebView webView;
@@ -46,22 +53,46 @@ public class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 100;
     private boolean directoryMode = false;
     private String directoryFilter = "";
-    private static final String CHANNEL_ID = "lozkho_station_channel";
-    private static final int NOTIFICATION_ID = 1001;
-    private MediaSession mediaSession;
-    private long lastVolumeChangeTime = 0;
-    private static final long VOLUME_DEBOUNCE = 400;
+
+    // Instancia estática para que PlaybackService / StationWidgetProvider
+    // puedan pedir el cambio de emisora (inyección JS) mientras la Activity
+    // está viva aunque esté en segundo plano (stopped).
+    private static volatile MainActivity instance;
+
+    // ---------------------------------------------------------------------------
+    // Botones físicos de volumen → cambio de emisora
+    //
+    // Política (patrón tipo reproductores de música, p. ej. Musicolet):
+    //   - Pulsación CORTA: NO se consume → el sistema ajusta el volumen
+    //     del medio con normalidad.
+    //   - MANTENCIÓN (~0.4 s, cuando el sistema empieza a repetir el
+    //     KeyEvent): se cambia de emisora y se consumen los eventos hasta
+    //     ACTION_UP para no disparar el cambio más de una vez.
+    //
+    // Android NO permite interceptar estas teclas con la pantalla bloqueada
+    // o la app en background (ver DecisionsView D7): para eso están las
+    // acciones prev/siguiente de la notificación de medios y los botones
+    // del widget.
+    // ---------------------------------------------------------------------------
+    private static final int LONG_PRESS_REPEAT_THRESHOLD = 8; // ~400ms (repeats ~50ms)
+    private boolean volumeLongConsumedUp = false;
+    private boolean volumeLongConsumedDown = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        instance = this;
         requestWindowFeature(Window.FEATURE_NO_TITLE);
 
         webView = new WebView(this);
         setContentView(webView);
 
-        // Mantener pantalla encendida
+        // Mantener pantalla encendida mientras la app está VISIBLE, para que
+        // el reloj virtual avance de forma fluida. (La reproducción con
+        // pantalla apagada / app en background la mantiene el WebView junto
+        // al PlaybackService.)
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -78,29 +109,13 @@ public class MainActivity extends Activity {
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         settings.setSupportZoom(false);
-        settings.setTextZoom(100);
+        // Respetar la escala de fuente del sistema (accesibilidad). Antes se
+        // forzaba 100%; eso ocultaba los ajustes de accesibilidad del usuario
+        // y causaba tamaños "desproporcionados" según el dispositivo.
 
-        // Mantener pantalla encendida para que el reloj virtual siga avanzando
-        // y el audio siga reproduciéndose con pantalla bloqueada.
-        getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-
-        // Forzar viewport a ancho de dispositivo móvil para que el CSS
-        // responsive funcione correctamente en Android WebView.
-        // Sin esto, el WebView usa un ancho de 980px por defecto (viewport
-        // de escritorio) y la app se ve "demasiado grande".
-        int widthDp = getResources().getConfiguration().screenWidthDp;
-        String viewportMeta = "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">";
-        // El meta tag ya está en el HTML del Next.js, pero el WebView
-        // necesita LoadWithOverviewMode + UseWideViewPort desactivados
-        // para respetar el viewport=device-width en lugar del suyo propio.
-
-        // Inyectar CSS para asegurar que el body no exceda el ancho
-        webView.evaluateJavascript(
-            "var style = document.createElement('style');" +
-            "style.textContent = 'html,body{max-width:100vw!important;overflow-x:hidden!important;margin:0!important;padding:0!important;}';" +
-            "document.head.appendChild(style);",
-            null
-        );
+        // El meta viewport (width=device-width) lo emite Next.js desde el HTML
+        // de la PWA; el WebView lo respeta con UseWideViewPort/LoadWithOverviewMode
+        // desactivados (configurado arriba).
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -110,7 +125,9 @@ public class MainActivity extends Activity {
                     String requestHost = url.getHost();
                     String requestPath = url.getPath();
 
-                    // Handler para URLs "https://lozkho.local/<base64>"
+                    // Handler para URLs "https://lozkho.local/<base64>" —
+                    // streaming de archivos SAF (audio importado) con
+                    // soporte de Range para el seek del <audio>.
                     if ("lozkho.local".equals(requestHost) && requestPath != null && requestPath.length() > 1) {
                         String encodedUri = requestPath.substring(1);
                         if (encodedUri.isEmpty()) {
@@ -151,6 +168,7 @@ public class MainActivity extends Activity {
                         }
                     }
 
+                    // Servir assets de la PWA (out/) desde el APK.
                     String path = requestPath;
                     if (requestHost != null && !requestHost.isEmpty()) return null;
                     if (path == null || path.isEmpty()) path = "index.html";
@@ -218,8 +236,8 @@ public class MainActivity extends Activity {
                 MainActivity.this.filePathCallback = filePathCallback;
 
                 // Modo archivos: selector normal
-                Intent intent = fileChooserParams.createIntent();
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                android.content.Intent intent = fileChooserParams.createIntent();
+                intent.putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true);
 
                 try {
                     startActivityForResult(intent, FILE_CHOOSER_REQUEST);
@@ -233,6 +251,7 @@ public class MainActivity extends Activity {
         });
 
         // JavascriptInterface para que el JS envíe info de la emisora activa
+        // (widget + PlaybackService + notificación de medios).
         webView.addJavascriptInterface(new StationInterface(this), "AndroidStation");
         // JavascriptInterface para que el JS indique modo directorio antes
         // de pulsar el <input type=file>
@@ -240,10 +259,25 @@ public class MainActivity extends Activity {
 
         webView.loadUrl("file:///android_asset/index.html");
 
-        // Crear canal de notificación (requerido en Android 8+)
-        createNotificationChannel();
+        // Permiso de notificaciones (Android 13+): la notificación de medios
+        // del PlaybackService no se muestra sin él.
         requestNotificationPermission();
-        initMediaSession();
+    }
+
+    /** Si la Activity (y su WebView) están vivas. */
+    public static boolean isRunning() {
+        return instance != null;
+    }
+
+    /**
+     * Cambia de emisora inyectando JS en el WebView (lo usan el servicio de
+     * reproducción, el widget y las teclas de volumen). Se puede llamar desde
+     * cualquier hilo: internamente pasa al hilo de UI.
+     */
+    public static void postStationChange(boolean next) {
+        final MainActivity activity = instance;
+        if (activity == null) return;
+        activity.runOnUiThread(() -> activity.changeStation(next));
     }
 
     private void requestNotificationPermission() {
@@ -257,92 +291,19 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void initMediaSession() {
-        try {
-            mediaSession = new MediaSession(this, "LozkhoStereo");
-            mediaSession.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS |
-                    MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
-            mediaSession.setActive(true);
-            android.util.Log.i("LozkhoMedia", "MediaSession inicializada");
-        } catch (Exception e) {
-            android.util.Log.e("LozkhoMedia", "Error inicializando MediaSession", e);
-        }
-    }
-
     private void changeStation(boolean next) {
         String js = next
             ? "window.__lozkhoVolumeUp && window.__lozkhoVolumeUp()"
             : "window.__lozkhoVolumeDown && window.__lozkhoVolumeDown()";
-        runOnUiThread(() -> {
-            if (webView != null) webView.evaluateJavascript(js, null);
-        });
-    }
-
-    /**
-     * Crea el canal de notificación para mostrar la emisora activa
-     * en la pantalla de bloqueo.
-     */
-    private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    getString(R.string.notification_channel_name),
-                    NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription(getString(R.string.notification_channel_desc));
-            channel.setShowBadge(false);
-            NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) {
-                manager.createNotificationChannel(channel);
-            }
+        if (webView != null) {
+            webView.evaluateJavascript(js, null);
         }
     }
 
     /**
-     * Actualiza la notificación de la pantalla de bloqueo con la info
-     * de la emisora activa. La notificación tiene VISIBILITY_PUBLIC para
-     * que se muestre incluso con la pantalla bloqueada.
-     */
-    private void updateLockScreenNotification(String name, String frequency,
-                                               String band, String trackTitle,
-                                               String accentColor) {
-        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager == null) return;
-
-        Intent openIntent = new Intent(this, MainActivity.class);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                this, 0, openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-        String contentText = frequency + " " + band;
-        if (trackTitle != null && !trackTitle.isEmpty()) {
-            contentText += " · " + trackTitle;
-        }
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(name)
-                .setContentText(contentText)
-                .setOngoing(true)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setContentIntent(pendingIntent)
-                .setShowWhen(false);
-
-        // Color de acento
-        try {
-            int color = Color.parseColor(accentColor);
-            builder.setColor(color);
-        } catch (Exception e) {
-            builder.setColor(Color.parseColor("#F59E0B"));
-        }
-
-        manager.notify(NOTIFICATION_ID, builder.build());
-    }
-
-    /**
-     * JavascriptInterface que el código JS llama para actualizar el widget
-     * y la notificación de la pantalla de bloqueo cuando cambia la emisora
-     * o la pista actual.
+     * JavascriptInterface que el código JS llama cuando cambia la emisora
+     * o la pista actual. Delega en el widget (SharedPreferences) y en el
+     * PlaybackService (notificación de medios + MediaSession).
      *
      * Uso desde JS:
      *   window.AndroidStation.updateStation(JSON.stringify({
@@ -367,17 +328,20 @@ public class MainActivity extends Activity {
                 String name = json.optString("name", "Lozkho Stereo");
                 String frequency = json.optString("frequency", "100.0");
                 String band = json.optString("band", "FM");
-                String trackTitle = json.optString("trackTitle", "");
+                String trackTitle = json.optString("trackTitle", "—");
                 String accentColor = json.optString("accentColor", "#F59E0B");
 
                 // Actualizar widget del home screen
                 StationWidgetProvider.saveAndUpdate(
                         activity, name, frequency, band, trackTitle, accentColor);
 
-                // Actualizar notificación de la pantalla de bloqueo
-                activity.runOnUiThread(() ->
-                        activity.updateLockScreenNotification(
-                                name, frequency, band, trackTitle, accentColor));
+                // Arrancar/actualizar el servicio de reproducción en primer
+                // plano (notificación de medios + MediaSession) que mantiene
+                // el proceso vivo en background. startForegroundService es
+                // seguro desde un hilo de fondo mientras la app está en
+                // primer plano; el servicio maneja los errores internamente.
+                PlaybackService.startOrUpdate(
+                        activity, name, frequency, band, trackTitle, accentColor);
             } catch (Exception e) {
                 android.util.Log.e("LozkhoStation", "Error parsing station JSON", e);
             }
@@ -385,42 +349,52 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
         // --- Directorio (ACTION_OPEN_DOCUMENT_TREE) ---
-        // No usa filePathCallback. En su lugar, lee los archivos y los
-        // envía al JS via evaluateJavascript con window.__lozkhoDirectoryResult.
+        // No usa filePathCallback. En su lugar, Java lista los archivos y
+        // envía SOLO METADATOS (nombre, ruta, tamaño, MIME, content:// URI)
+        // al JS vía evaluateJavascript con window.__lozkhoDirectoryFile.
+        // El audio se consume por streaming vía lozkho.local; los archivos
+        // pequeños de texto (M3U8/JSON/LRC) los descarga el JS con fetch()
+        // solo cuando los necesita parsear.
         if (requestCode == DIRECTORY_PICK_REQUEST) {
             if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null) {
                 // Usuario canceló
-                webView.evaluateJavascript(
-                    "window.__lozkhoDirectoryResult && window.__lozkhoDirectoryResult([])",
-                    null);
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "window.__lozkhoDirectoryResult && window.__lozkhoDirectoryResult([])",
+                        null);
+                }
                 return;
             }
 
             final Uri treeUri = data.getData();
             try {
                 getContentResolver().takePersistableUriPermission(treeUri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
             } catch (Exception e) {
                 // No crítico
             }
 
-            // Listar y leer archivos en hilo background, enviando uno a uno
+            // Listar archivos en hilo background, enviando uno a uno
             new Thread(() -> {
                 int[] counter = {0};
                 try {
-                    DocumentFile root = DocumentFile.fromTreeUri(this, treeUri);
-                    collectFilesAsJson(root, "", counter);
+                    DocumentFile root = DocumentFile.fromTreeUri(MainActivity.this, treeUri);
+                    collectFilesAsMetadata(root, "", counter);
                 } catch (Exception e) {
                     android.util.Log.e("LozkhoDir", "Error listando archivos", e);
                 }
 
                 // Notificar al JS que terminamos
                 final int total = counter[0];
-                runOnUiThread(() -> webView.evaluateJavascript(
-                    "window.__lozkhoDirectoryDone && window.__lozkhoDirectoryDone(" + total + ")",
-                    null));
+                runOnUiThread(() -> {
+                    if (webView != null) {
+                        webView.evaluateJavascript(
+                            "window.__lozkhoDirectoryDone && window.__lozkhoDirectoryDone(" + total + ")",
+                            null);
+                    }
+                });
             }).start();
             return;
         }
@@ -454,54 +428,92 @@ public class MainActivity extends Activity {
         filePathCallback = null;
     }
 
-    // Cambiar emisora al PRESIONAR botón de volumen (no sostener).
-    // Consume TODOS los eventos de volumen para que el sistema NO cambie el volumen.
+    // ---------------------------------------------------------------------------
+    // Botones de volumen: pulsación corta → volumen del sistema (NO se
+    // consume); mantención → cambio de emisora (se consume hasta ACTION_UP).
+    // ---------------------------------------------------------------------------
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        int action = event.getAction();
         int keyCode = event.getKeyCode();
-
         if (keyCode != KeyEvent.KEYCODE_VOLUME_UP
                 && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
             return super.dispatchKeyEvent(event);
         }
 
         final boolean isUp = keyCode == KeyEvent.KEYCODE_VOLUME_UP;
+        boolean longConsumed = isUp ? volumeLongConsumedUp : volumeLongConsumedDown;
 
-        if (action == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-            long now = System.currentTimeMillis();
-            if (now - lastVolumeChangeTime > VOLUME_DEBOUNCE) {
-                lastVolumeChangeTime = now;
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            // El sistema repite el KeyEvent (~50ms) mientras se mantiene la
+            // tecla. A partir del umbral, se considera "mantención" → cambiar
+            // de emisora una sola vez y consumir los siguientes repeats.
+            if (event.getRepeatCount() >= LONG_PRESS_REPEAT_THRESHOLD && !longConsumed) {
+                if (isUp) volumeLongConsumedUp = true; else volumeLongConsumedDown = true;
                 changeStation(isUp);
+                return true;
             }
+            if (longConsumed) {
+                // Ya se cambió de emisora en esta mantención: consumir el resto
+                return true;
+            }
+            // Pulsación corta: NO consumir → el sistema ajusta el volumen.
+            return super.dispatchKeyEvent(event);
+        } else { // ACTION_UP
+            if (longConsumed) {
+                // Cerrar la mantención y consumir el UP para no ajustar el
+                // volumen tras el cambio de emisora.
+                if (isUp) volumeLongConsumedUp = false; else volumeLongConsumedDown = false;
+                return true;
+            }
+            // Soltado antes del umbral: comportamiento normal del sistema.
+            return super.dispatchKeyEvent(event);
         }
-        // Consumir TODOS los eventos de volumen
-        return true;
     }
 
     private String guessMimeType(String path) {
-        if (path.endsWith(".html")) return "text/html";
-        if (path.endsWith(".js")) return "application/javascript";
-        if (path.endsWith(".css")) return "text/css";
-        if (path.endsWith(".json")) return "application/json";
-        if (path.endsWith(".png")) return "image/png";
-        if (path.endsWith(".ico")) return "image/x-icon";
-        if (path.endsWith(".svg")) return "image/svg+xml";
-        if (path.endsWith(".webmanifest")) return "application/manifest+json";
-        if (path.endsWith(".woff2")) return "font/woff2";
-        if (path.endsWith(".woff")) return "font/woff";
-        if (path.endsWith(".txt")) return "text/plain";
-        if (path.endsWith(".bat")) return "text/plain";
-        if (path.endsWith(".map")) return "application/json";
+        if (path == null) return "application/octet-stream";
+        String p = path.toLowerCase();
+        if (p.endsWith(".html")) return "text/html";
+        if (p.endsWith(".js")) return "application/javascript";
+        if (p.endsWith(".css")) return "text/css";
+        if (p.endsWith(".json")) return "application/json";
+        if (p.endsWith(".png")) return "image/png";
+        if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
+        if (p.endsWith(".gif")) return "image/gif";
+        if (p.endsWith(".bmp")) return "image/bmp";
+        if (p.endsWith(".webp")) return "image/webp";
+        if (p.endsWith(".svg")) return "image/svg+xml";
+        if (p.endsWith(".ico")) return "image/x-icon";
+        if (p.endsWith(".webmanifest")) return "application/manifest+json";
+        if (p.endsWith(".woff2")) return "font/woff2";
+        if (p.endsWith(".woff")) return "font/woff";
+        if (p.endsWith(".txt")) return "text/plain";
+        if (p.endsWith(".bat")) return "text/plain";
+        if (p.endsWith(".map")) return "application/json";
+        if (p.endsWith(".m3u8") || p.endsWith(".m3u")) return "audio/x-mpegurl";
+        if (p.endsWith(".lrc")) return "text/plain";
+        if (p.endsWith(".mp3")) return "audio/mpeg";
+        if (p.endsWith(".m4a")) return "audio/mp4";
+        if (p.endsWith(".aac")) return "audio/aac";
+        if (p.endsWith(".flac")) return "audio/flac";
+        if (p.endsWith(".ogg")) return "audio/ogg";
+        if (p.endsWith(".opus")) return "audio/ogg";
+        if (p.endsWith(".wav")) return "audio/wav";
+        if (p.endsWith(".wma")) return "audio/x-ms-wma";
+        if (p.endsWith(".zip")) return "application/zip";
         return "application/octet-stream";
     }
 
     @Override
     public void onBackPressed() {
+        // App de música: el botón atrás NO termina la app (mataría el WebView
+        // y con él la reproducción). Con historial en el WebView vuelve atrás;
+        // si no hay historial, pasa la app a segundo plano manteniendo la
+        // reproducción viva gracias al PlaybackService.
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
-            super.onBackPressed();
+            moveTaskToBack(true);
         }
     }
 
@@ -509,21 +521,27 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         // NO pausar el WebView — queremos que el audio y el reloj virtual
-        // sigan funcionando en segundo plano.
-        // Solo pausar si el WebView está en una pestaña invisible.
+        // sigan funcionando en segundo plano mientras el proceso esté vivo
+        // (lo mantiene el PlaybackService). El propio WebView NO se pausa
+        // (no se llama a webView.onPause() ni pauseTimers()).
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        // Re-activar MediaSession al volver a la app
-        if (mediaSession != null) {
-            try { mediaSession.setActive(true); } catch (Exception e) {}
-        }
+        // Nada especial: la MediaSession vive en PlaybackService.
     }
 
     @Override
     protected void onDestroy() {
+        // Si la Activity se destruye (p. ej. el usuario deslizó la app fuera
+        // de recientes), el WebView y su audio mueren con ella: detener el
+        // servicio también para no dejar una notificación que no suena.
+        try {
+            stopService(new android.content.Intent(this, PlaybackService.class));
+        } catch (Exception ignored) {
+        }
+        instance = null;
         if (webView != null) {
             webView.destroy();
             webView = null;
@@ -532,30 +550,29 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Recorre recursivamente un DocumentFile (directorio SAF), lee cada archivo
-     * y lo envía INDIVIDUALMENTE al JS via evaluateJavascript.
+     * Recorre recursivamente un DocumentFile (directorio SAF) y envía al JS,
+     * uno a uno, SOLO los METADATOS de cada archivo (nombre, ruta relativa,
+     * tamaño, MIME type y content:// URI). El contenido NO se lee aquí:
      *
-     * Esto evita el crash por OutOfMemoryError que ocurría cuando se intentaba
-     * leer TODOS los archivos a la vez en un solo StringBuilder y pasarlo
-     * como un único string gigante a evaluateJavascript().
+     *  - Audio: el JS lo reproduce por streaming vía
+     *    https://lozkho.local/<base64(contentUri)> (shouldInterceptRequest
+     *    con soporte de Range). Antes cada MP3 iba completo como data-URL
+     *    base64 (~1.33x su tamaño) por evaluateJavascript → importaciones
+     *    de minutos y audio duplicado en IndexedDB.
+     *  - Archivos pequeños (M3U8/JSON/LRC/miniaturas): el JS los descarga
+     *    con fetch() de esa misma URL solo cuando los necesita.
      *
-     * Solo incluye archivos de audio y playlists (mp3, m4a, flac, ogg, wav,
-     * m3u8, m3u, json, lrc, txt, zip).
+     * Solo incluye archivos de audio/playlists/letras/imágenes (ver
+     * matchesFilter). Límite de seguridad: MAX_FILES.
      *
      * @param dir Directorio raíz DocumentFile
      * @param prefix Path relativo acumulado (ej. "subfolder")
      * @param counter Contador de archivos enviados (array de 1 elemento)
      */
-    private int collectFilesAsJson(DocumentFile dir, String prefix, int[] counter) {
+    private int collectFilesAsMetadata(DocumentFile dir, String prefix, int[] counter) {
         if (dir == null) return counter[0];
 
-        // Límites de seguridad aumentados para soportar colecciones grandes.
-        // Antes: 30 archivos / 50MB → rompía con cualquier biblioteca real.
-        // Ahora: 3000 archivos / 500MB. Los MP3 largos (hasta 30MB) se admiten.
         final int MAX_FILES = 3000;
-        final long MAX_TOTAL_SIZE = 500 * 1024 * 1024;
-        final long MAX_FILE_SIZE = 30 * 1024 * 1024;
-        long totalSize = 0;
 
         for (DocumentFile file : dir.listFiles()) {
             if (counter[0] >= MAX_FILES) {
@@ -564,7 +581,7 @@ public class MainActivity extends Activity {
             }
             if (file.isDirectory()) {
                 String newPrefix = prefix.isEmpty() ? file.getName() : prefix + "/" + file.getName();
-                counter[0] = collectFilesAsJson(file, newPrefix, counter);
+                counter[0] = collectFilesAsMetadata(file, newPrefix, counter);
             } else if (file.isFile()) {
                 String name = file.getName();
                 if (name == null) continue;
@@ -573,63 +590,52 @@ public class MainActivity extends Activity {
                 if (!matchesFilter(lower)) continue;
 
                 long fileSize = file.length();
-                if (fileSize > MAX_FILE_SIZE) {
-                    android.util.Log.w("LozkhoDir", "Archivo demasiado grande (>30MB), saltando: " + name + " (" + fileSize + " bytes)");
-                    continue;
-                }
-                if (totalSize + fileSize > MAX_TOTAL_SIZE) {
-                    android.util.Log.w("LozkhoDir", "Tamaño total máximo (500MB) alcanzado, saltando: " + name);
-                    continue;
-                }
+                String uri = file.getUri().toString();
+                String mimeType = guessMimeType(name);
 
-                try {
-                    InputStream is = getContentResolver().openInputStream(file.getUri());
-                    if (is == null) continue;
+                String relativePath = prefix.isEmpty() ? name : prefix + "/" + name;
 
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    byte[] buffer = new byte[8192];
-                    int read;
-                    while ((read = is.read(buffer)) != -1) {
-                        baos.write(buffer, 0, read);
+                String js = "window.__lozkhoDirectoryFile && window.__lozkhoDirectoryFile({" +
+                    "\"name\":" + jsonEscape(name) + "," +
+                    "\"relativePath\":" + jsonEscape(relativePath) + "," +
+                    "\"size\":" + fileSize + "," +
+                    "\"type\":" + jsonEscape(mimeType) + "," +
+                    "\"contentUri\":" + jsonEscape(uri) +
+                    "})";
+
+                final String jsFinal = js;
+                runOnUiThread(() -> {
+                    if (webView != null) {
+                        webView.evaluateJavascript(jsFinal, null);
                     }
-                    is.close();
+                });
 
-                    byte[] fileBytes = baos.toByteArray();
-                    totalSize += fileBytes.length;
-
-                    String base64 = android.util.Base64.encodeToString(fileBytes, android.util.Base64.NO_WRAP);
-                    String mimeType = guessMimeType(name);
-                    String dataUrl = "data:" + mimeType + ";base64," + base64;
-
-                    fileBytes = null;
-                    base64 = null;
-
-                    String relativePath = prefix.isEmpty() ? name : prefix + "/" + name;
-                    String escapedName = name.replace("\\", "\\\\").replace("\"", "\\\"");
-                    String escapedPath = relativePath.replace("\\", "\\\\").replace("\"", "\\\"");
-
-                    String js = "window.__lozkhoDirectoryFile && window.__lozkhoDirectoryFile({" +
-                        "\"name\":\"" + escapedName + "\"," +
-                        "\"relativePath\":\"" + escapedPath + "\"," +
-                        "\"size\":" + fileSize + "," +
-                        "\"type\":\"" + mimeType + "\"," +
-                        "\"dataUrl\":\"" + dataUrl + "\"" +
-                        "})";
-
-                    dataUrl = null;
-
-                    final String jsFinal = js;
-                    runOnUiThread(() -> webView.evaluateJavascript(jsFinal, null));
-
-                    counter[0]++;
-                    Thread.sleep(5);
-
-                } catch (Exception e) {
-                    android.util.Log.w("LozkhoDir", "Error leyendo " + name, e);
-                }
+                counter[0]++;
             }
         }
         return counter[0];
+    }
+
+    /** Escapa un string para incrustarlo como valor JSON en un String JS. */
+    private String jsonEscape(String s) {
+        if (s == null) return "null";
+        StringBuilder sb = new StringBuilder(s.length() + 8);
+        sb.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\': sb.append("\\\\"); break;
+                case '"': sb.append("\\\""); break;
+                case '\n': sb.append("\\n"); break;
+                case '\r': sb.append("\\r"); break;
+                case '\t': sb.append("\\t"); break;
+                default:
+                    if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
+                    else sb.append(c);
+            }
+        }
+        sb.append('"');
+        return sb.toString();
     }
 
     private boolean matchesFilter(String filename) {
@@ -652,12 +658,11 @@ public class MainActivity extends Activity {
         // viene de JS (aceptado por el usuario en ImportExportDialog) y
         // ahora incluye extensiones de audio + imagen para que SAF sí
         // devuelva los MP3 y los thumbnails al importar emisoras.
-        String lower = filename.toLowerCase();
         String[] exts = directoryFilter.toLowerCase().split(",");
         for (String ext : exts) {
             ext = ext.trim();
             if (!ext.startsWith(".")) ext = "." + ext;
-            if (lower.endsWith(ext)) return true;
+            if (filename.endsWith(ext)) return true;
         }
         return false;
     }
@@ -666,16 +671,15 @@ public class MainActivity extends Activity {
      * JavascriptInterface para importar directorios en Android.
      *
      * El flujo es:
-     *   1. JS llama a window.AndroidFilePicker.pickDirectory()
+     *   1. JS llama a window.AndroidFilePicker.pickDirectory([filtro])
      *   2. Java lanza ACTION_OPEN_DOCUMENT_TREE (selector de carpeta SAF)
-     *   3. Usuario elige carpeta
+     *   3. Usuario elige carpeta (Java pide permiso persistente READ)
      *   4. Java lista todos los archivos recursivamente con DocumentFile
-     *   5. Para cada archivo, Java lee su nombre, tamaño, MIME type y
-     *      contenido (como data URL base64) y los envía de vuelta al JS
-     *      via evaluateJavascript con una función callback.
+     *   5. Para cada archivo, Java envía metadatos + content:// URI al JS
+     *      vía evaluateJavascript (callback window.__lozkhoDirectoryFile)
      *
-     * El JS recibe los archivos como objetos {name, size, type, dataUrl}
-     * donde dataUrl es "data:audio/mpeg;base64,...."
+     * El JS recibe objetos {name, relativePath, size, type, contentUri} y
+     * construye URLs reproducibles https://lozkho.local/<base64(contentUri)>.
      */
     private class FilePickerInterface {
         @JavascriptInterface
@@ -687,16 +691,18 @@ public class MainActivity extends Activity {
         public void pickDirectory(String filter) {
             directoryFilter = filter != null ? filter : "";
             runOnUiThread(() -> {
-                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE);
+                intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | android.content.Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
                 try {
                     startActivityForResult(intent, DIRECTORY_PICK_REQUEST);
                 } catch (Exception e) {
                     android.util.Log.e("LozkhoDir", "Error lanzando SAF", e);
-                    webView.evaluateJavascript(
-                        "window.__lozkhoDirectoryDone && window.__lozkhoDirectoryDone(0)",
-                        null);
+                    if (webView != null) {
+                        webView.evaluateJavascript(
+                            "window.__lozkhoDirectoryDone && window.__lozkhoDirectoryDone(0)",
+                            null);
+                    }
                 }
             });
         }
