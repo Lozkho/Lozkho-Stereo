@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import type { TouchEvent } from "react";
 import { useLozkho, buildExtendedPlaylist } from "@/lozkho/store";
 import { audioStore } from "@/lozkho/audioStore";
 import { lozkhoLog } from "@/lozkho/logger";
@@ -27,6 +28,44 @@ export function PrototypeShell() {
   const settingsOpen = useLozkho((s) => s.settingsOpen);
   const openSettings = useLozkho((s) => s.openSettings);
   const tickClock = useLozkho((s) => s.tickClock);
+
+  // Deslizamiento horizontal → cambiar de pestaña sin buscar los botones
+  // del fondo (conduce sin desviar la mirada). SOLO horizontal: si el
+  // gesto es vertical se deja al scroll normal de la página.
+  const touchStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
+
+  const handleTouchStart = (e: TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      t: Date.now(),
+    };
+  };
+
+  const handleTouchEnd = (e: TouchEvent) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+    const target = e.target as HTMLElement;
+    // No interpretar gestos sobre controles (slider, botones).
+    if (target?.closest("input, button, a")) return;
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    const dt = Date.now() - start.t;
+    if (dt > 900 || Math.abs(dx) < 60) return;
+    if (Math.abs(dx) < Math.abs(dy) * 1.5) return; // era scroll vertical
+    const idx = NAV.findIndex((n) => n.id === view);
+    if (idx < 0) return;
+    const next =
+      dx < 0
+        ? Math.min(NAV.length - 1, idx + 1)
+        : Math.max(0, idx - 1);
+    if (next !== idx) setView(NAV[next].id);
+  };
 
   // Ticker global que avanza el reloj virtual de TODAS las emisoras.
   // Frecuencia: 500ms para mejor sincronización con el audio real.
@@ -207,7 +246,11 @@ export function PrototypeShell() {
   }, [useLozkho.getState().stations.length]);
 
   return (
-    <div className="min-h-[100vh] bg-black text-white flex flex-col">
+    <div
+      className="min-h-[100vh] bg-black text-white flex flex-col"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <main className="flex-1">
         {view === "emisora" && (
           <StationScreen onOpenSettings={() => openSettings(true)} />

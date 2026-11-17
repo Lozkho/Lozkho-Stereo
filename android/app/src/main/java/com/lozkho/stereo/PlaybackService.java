@@ -5,9 +5,12 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.media.AudioManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.IBinder;
@@ -54,6 +57,26 @@ public class PlaybackService extends Service {
     public static final String EXTRA_ACCENT = "accent";
 
     private MediaSessionCompat mediaSession;
+
+    // --- Detección de mantención de volumen con pantalla apagada ------------
+    // Con el screen off, Android NO entrega KEYCODE_VOLUME a la Activity, pero
+    // SÍ emite android.media.VOLUME_CHANGED_ACTION. Un toque aislado produce
+    // UN broadcast (se ignora); una mantención produce una ráfaga (~10/s).
+    // Cuando detectamos >=4 cambios en 700ms, cambiamos de emisora. Con la
+    // pantalla encendida este receiver NO dispara: MainActivity consume todos
+    // los KeyEvents de volumen y el sistema no cambia el stream.
+    private static final String VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION";
+    private static final String EXTRA_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE";
+    private static final String EXTRA_STREAM_VALUE = "android.media.EXTRA_VOLUME_STREAM_VALUE";
+    private static final int VOLUME_BURST_COUNT = 4;
+    private static final long VOLUME_BURST_WINDOW_MS = 700;
+
+    private BroadcastReceiver volumeChangedReceiver;
+    private int lastVolumeValue = -1;
+    private long volumeBurstStart = 0;
+    private int volumeBurstCount = 0;
+    private boolean volumeHoldTriggered = false;
+
     private String stationName = "Lozkho Stereo";
     private String stationInfo = "100.0 FM";
     private String trackTitle = "—";
@@ -64,6 +87,52 @@ public class PlaybackService extends Service {
         super.onCreate();
         createNotificationChannel();
         initMediaSession();
+        registerVolumeHoldReceiver();
+    }
+
+    private void registerVolumeHoldReceiver() {
+        try {
+            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                lastVolumeValue = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+            }
+            volumeChangedReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (intent == null || intent.getAction() == null) return;
+                    if (!VOLUME_CHANGED_ACTION.equals(intent.getAction())) return;
+                    int stream = intent.getIntExtra(EXTRA_STREAM_TYPE, -1);
+                    if (stream != AudioManager.STREAM_MUSIC) return;
+                    int value = intent.getIntExtra(EXTRA_STREAM_VALUE, -1);
+                    if (value < 0) return;
+
+                    final boolean up = lastVolumeValue >= 0 && value > lastVolumeValue;
+                    lastVolumeValue = value;
+
+                    long now = System.currentTimeMillis();
+                    if (now - volumeBurstStart > VOLUME_BURST_WINDOW_MS) {
+                        // Nueva ráfaga (o primer evento tras un rato)
+                        volumeBurstStart = now;
+                        volumeBurstCount = 0;
+                        volumeHoldTriggered = false;
+                    }
+                    volumeBurstCount++;
+
+                    // Un toque corto = 1 evento → NO cambia nada.
+                    // Mantener pulsado = varios eventos seguidos → cambiar
+                    // de emisora una sola vez por ráfaga.
+                    if (!volumeHoldTriggered && volumeBurstCount >= VOLUME_BURST_COUNT) {
+                        volumeHoldTriggered = true;
+                        android.util.Log.i("LozkhoMedia", "Volumen mantenido (screen off) → cambio de emisora");
+                        MainActivity.postStationChange(up);
+                    }
+                }
+            };
+            IntentFilter filter = new IntentFilter(VOLUME_CHANGED_ACTION);
+            registerReceiver(volumeChangedReceiver, filter);
+        } catch (Exception e) {
+            android.util.Log.w("LozkhoMedia", "No se pudo registrar receiver de volumen", e);
+        }
     }
 
     private void createNotificationChannel() {
@@ -209,6 +278,13 @@ public class PlaybackService extends Service {
 
     @Override
     public void onDestroy() {
+        if (volumeChangedReceiver != null) {
+            try {
+                unregisterReceiver(volumeChangedReceiver);
+            } catch (Exception ignored) {
+            }
+            volumeChangedReceiver = null;
+        }
         if (mediaSession != null) {
             try {
                 mediaSession.setActive(false);
